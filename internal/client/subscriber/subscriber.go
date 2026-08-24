@@ -8,11 +8,13 @@ import (
 
 	"trontria.com/gobroke/v2/internal/command"
 	"trontria.com/gobroke/v2/internal/netter"
+	"trontria.com/gobroke/v2/internal/utils"
 )
 
 type Subscriber struct {
 	params SubscriberParams
 	conn   net.Conn
+	worker *Worker
 }
 
 func (s *Subscriber) Stop() error {
@@ -62,6 +64,10 @@ func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 	if topic != s.params.Topic {
 		return fmt.Errorf("Receive invalid topic: expected %s, got %s", s.params.Topic, topic)
 	}
+
+	s.worker.Do(func(message string) {
+		s.params.Handler(topic, message)
+	}, message)
 
 	return nil
 }
@@ -114,10 +120,13 @@ type SubscriberParams struct {
 	Type    netter.ConnectionType
 	Topic   string
 	Handler func(topic string, message string)
+
+	MaxWorker int
 }
 
 func New(params SubscriberParams) *Subscriber {
 	return &Subscriber{
 		params: params,
+		worker: NewWorker(utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker)),
 	}
 }
