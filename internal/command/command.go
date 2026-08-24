@@ -121,3 +121,33 @@ func ReadCommand(conn net.Conn) (*BaseCommand, error) {
 
 	return command, err
 }
+
+func WriteCommandAndWaitForAck(conn net.Conn, command *BaseCommand) error {
+	err := WriteCommand(conn, command)
+	if err != nil {
+		return err
+	}
+
+	response, err := ReadCommand(conn)
+	if err != nil {
+		return err
+	}
+
+	if !response.IsAckOf(command) {
+		return fmt.Errorf("expected ACK for command %s, but got: %s", command.String(), response.String())
+	}
+
+	return nil
+}
+
+func WriteAckOrNack(conn net.Conn, command *BaseCommand, err error) error {
+	if err != nil {
+		log.Printf("Sending NACK for command %s due to error: %v", command.String(), err)
+		nackCmd := NewNackCommand(command)
+		return WriteCommand(conn, nackCmd)
+	} else {
+		log.Printf("Sending ACK for command %s", command.String())
+		ackCmd := NewAckCommand(command)
+		return WriteCommand(conn, ackCmd)
+	}
+}

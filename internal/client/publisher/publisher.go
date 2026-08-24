@@ -10,7 +10,7 @@ import (
 )
 
 type Publisher struct {
-	params ProviderParams
+	params PublisherParams
 	conn   net.Conn
 }
 
@@ -33,30 +33,17 @@ func (p *Publisher) handshakeWithServer() error {
 	}
 
 	cmd := command.NewHandshakeCommand(command.Publisher)
-	err := command.WriteCommand(p.conn, cmd)
-	if err != nil {
-		log.Printf("Failed to send handshake command: %v", err)
-		return err
-	}
+	err := command.WriteCommandAndWaitForAck(p.conn, cmd)
 
-	response, err := command.ReadCommand(p.conn)
-	if err != nil {
-		log.Printf("Failed to read handshake response: %v", err)
-		return err
-	}
-
-	if !response.IsAckOf(cmd) {
-		return fmt.Errorf("expected ACK of handshake command, but got: %s", response.Command)
-	}
-
-	return nil
+	return err
 }
 
 func (p *Publisher) Start() error {
 	log.Println("Starting publisher...")
 	conn, err := netter.CreateClientConnection(p.params.Type)
 	if err != nil {
-		log.Fatalf("Failed to create socket: %v", err)
+		p.Stop()
+		return err
 	}
 	p.conn = conn
 
@@ -64,7 +51,8 @@ func (p *Publisher) Start() error {
 
 	err = p.handshakeWithServer()
 	if err != nil {
-		log.Fatalf("Handshake failed: %v", err)
+		p.Stop()
+		return err
 	}
 	log.Println("Handshake successful.")
 	return nil
@@ -101,10 +89,10 @@ func (p *Publisher) Publish(topic string, message string) error {
 	return nil
 }
 
-type ProviderParams struct {
+type PublisherParams struct {
 	Type netter.ConnectionType
 }
 
-func New(params ProviderParams) *Publisher {
+func New(params PublisherParams) *Publisher {
 	return &Publisher{params: params}
 }

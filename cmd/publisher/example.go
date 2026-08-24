@@ -3,28 +3,15 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"trontria.com/gobroke/v2/internal/client/publisher"
 	"trontria.com/gobroke/v2/internal/netter"
+	"trontria.com/gobroke/v2/internal/utils"
 )
 
-func guardInterrupt(broker *publisher.Publisher) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		log.Println("Shutting down gracefully...")
-		broker.Stop() // This deletes the socket file
-		os.Exit(0)
-	}()
-}
-
-func publishData(publisher *publisher.Publisher, wg *sync.WaitGroup, topic string, message string) {
+func publishData(publisher *publisher.Publisher, topic string, message string) {
 	for i := range 5 {
 		message := fmt.Sprintf("message:%s:%d", message, i)
 		err := publisher.Publish(topic, message)
@@ -39,11 +26,14 @@ func publishData(publisher *publisher.Publisher, wg *sync.WaitGroup, topic strin
 }
 
 func main() {
-	publisher := publisher.New(publisher.ProviderParams{
+	publisher := publisher.New(publisher.PublisherParams{
 		Type: netter.UNIX,
 	})
-	guardInterrupt(publisher)
-	publisher.Start()
+	utils.GuardInterrupt(publisher)
+	err := publisher.Start()
+	if err != nil {
+		log.Fatalf("Failed to start publisher: %v", err)
+	}
 	defer func() {
 		log.Println("Cleaning up and stopping publisher...")
 		publisher.Stop()
@@ -51,7 +41,13 @@ func main() {
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		publishData(publisher, &wg, "topic1", "apple")
+		publishData(publisher, "topic1", "apple")
+	})
+	wg.Go(func() {
+		publishData(publisher, "topic2", "peach")
+	})
+	wg.Go(func() {
+		publishData(publisher, "topic1", "banana")
 	})
 
 	wg.Wait()

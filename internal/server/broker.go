@@ -26,8 +26,8 @@ type Broker struct {
 	publishersMutex sync.Mutex
 	publishers      []PublisherConnection
 
-	subscribersMutex sync.Mutex
-	subscribers      []SubscriberConnection
+	topicsMutex sync.Mutex
+	topics      map[string]*Topic
 }
 
 func (b *Broker) handlePublisher(conn net.Conn) {
@@ -44,6 +44,7 @@ func (b *Broker) handlePublisher(conn net.Conn) {
 		case cmd.IsPublish():
 			log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
 			command.WriteCommand(conn, command.NewAckCommand(cmd))
+			b.publishToSubscribers(cmd)
 		default:
 			log.Printf("Unexpected command from publisher %s: %s", conn.RemoteAddr(), cmd.Command)
 			command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -51,20 +52,34 @@ func (b *Broker) handlePublisher(conn net.Conn) {
 	}
 }
 
-func (b *Broker) publishToSubscribers(command command.BaseCommand) {
-	b.subscribersMutex.Lock()
-	defer b.subscribersMutex.Unlock()
+func (b *Broker) publishToSubscribers(cmd *command.BaseCommand) error {
+	b.topicsMutex.Lock()
+	defer b.topicsMutex.Unlock()
 
-	for _, subscriber := range b.subscribers {
-		go func() {
-			log.Printf("Publishing to subscriber %s: %v", subscriber.conn.RemoteAddr(), command.Params)
-		}()
+	topicName := cmd.Params[0]
+	topic, exists := b.topics[topicName]
+	if !exists {
+		log.Printf("No subscribers for topic %s", topicName)
+		return fmt.Errorf("no subscribers for topic %s", topicName)
 	}
+
+	return topic.Broadcast(cmd)
 }
 
-func (b *Broker) handleSubscriber(conn net.Conn) {
-	// Placeholder for handling subscriber logic
-	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
+func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) {
+	b.topicsMutex.Lock()
+	defer b.topicsMutex.Unlock()
+
+	topicName := cmd.Params[1]
+	topic, exists := b.topics[topicName]
+	if !exists {
+		topic = NewTopic(topicName)
+		b.topics[topicName] = topic
+	}
+
+	subscriber := SubscriberConnection{conn: conn}
+	topic.AddSubscriber(subscriber)
+	log.Printf("Subscriber %s added to topic %s", conn.RemoteAddr(), topicName)
 }
 
 func (b *Broker) handShakeWithClient(conn net.Conn) error {
@@ -74,30 +89,28 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 		return err
 	}
 
-	if !cmd.IsHandshake() {
+	switch {
+	case !cmd.IsHandshake():
 		log.Printf("Expected handshake command, got: %s", cmd.Command)
+		command.WriteCommand(conn, command.NewNackCommand(cmd))
 		return fmt.Errorf("expected handshake command, but got: %s", cmd.Command)
-	}
-
-	command.WriteCommand(conn, command.NewAckCommand(cmd))
-	log.Printf("Received handshake command with params: %v", cmd.Params)
-
-	if cmd.Params[0] == string(command.Publisher) {
+	case cmd.Params[0] == string(command.Publisher):
 		b.publishersMutex.Lock()
 		b.publishers = append(b.publishers, PublisherConnection{conn: conn})
 		b.publishersMutex.Unlock()
 		log.Printf("Registered new publisher from %s", conn.RemoteAddr())
 		go b.handlePublisher(conn)
-	} else if cmd.Params[0] == string(command.Subscriber) {
-		b.subscribersMutex.Lock()
-		b.subscribers = append(b.subscribers, SubscriberConnection{conn: conn})
-		b.subscribersMutex.Unlock()
+		command.WriteCommand(conn, command.NewAckCommand(cmd))
+	case cmd.Params[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
-		go b.handleSubscriber(conn)
-	} else {
+		go b.handleSubscriber(conn, cmd)
+		command.WriteCommand(conn, command.NewAckCommand(cmd))
+	default:
 		log.Printf("Unknown client type: %s", cmd.Params[0])
+		command.WriteCommand(conn, command.NewNackCommand(cmd))
 		return fmt.Errorf("unknown client type: %s", cmd.Params[0])
 	}
+
 	return nil
 }
 
@@ -136,10 +149,17 @@ func (b *Broker) Start() {
 	}
 }
 
-func (b *Broker) Stop() {
+func (b *Broker) Stop() error {
+	log.Println("Stopping broker...")
 	if b.socket != nil {
-		b.socket.Close()
+		err := b.socket.Close()
+		if err != nil {
+			log.Printf("Failed to close connection: %v", err)
+			return err
+		}
+		log.Println("Broker stopped.")
 	}
+	return nil
 }
 
 type BrokerParams struct {
@@ -147,5 +167,8 @@ type BrokerParams struct {
 }
 
 func New(params BrokerParams) *Broker {
-	return &Broker{params: params}
+	return &Broker{
+		params: params,
+		topics: make(map[string]*Topic),
+	}
 }
