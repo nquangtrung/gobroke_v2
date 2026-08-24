@@ -65,9 +65,9 @@ func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 		return fmt.Errorf("Receive invalid topic: expected %s, got %s", s.params.Topic, topic)
 	}
 
-	s.worker.Do(func(message string) {
+	s.worker.Do(func() {
 		s.params.Handler(topic, message)
-	}, message)
+	})
 
 	return nil
 }

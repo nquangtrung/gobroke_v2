@@ -6,12 +6,12 @@ type Worker struct {
 	guard chan struct{}
 }
 
-func (w *Worker) Do(f func(message string), message string) {
-	log.Printf("Worker received message: %s queue: %d/%d", message, len(w.guard), cap(w.guard))
+func (w *Worker) Do(f func()) {
+	log.Printf("Spawning worker routine - capacity: %d/%d", len(w.guard), cap(w.guard))
 	w.guard <- struct{}{}
 	go func() {
 		defer func() { <-w.guard }()
-		f(message)
+		f()
 	}()
 }
 
