@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"trontria.com/gobroke/v2/internal/net"
+	"trontria.com/gobroke/v2/internal/netter"
 	"trontria.com/gobroke/v2/internal/server"
 )
 
@@ -23,7 +23,7 @@ func guardInterrupt(broker *server.Broker) {
 
 func main() {
 	broker := server.New(server.BrokerParams{
-		Type: net.UNIX,
+		Type: netter.UNIX,
 	})
 	guardInterrupt(broker)
 	broker.Start()

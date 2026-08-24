@@ -1,4 +1,4 @@
-package net
+package command
 
 import (
 	"fmt"
@@ -10,8 +10,10 @@ import (
 type Command string
 
 const (
-	HandshakeCommand Command = "HANDSHAKE"
-	AckCommand       Command = "ACK"
+	Handshake Command = "HANDSHAKE"
+	Ack       Command = "ACK"
+	Nack      Command = "NACK"
+	Publish   Command = "PUBLISH"
 )
 
 type BaseCommand struct {
@@ -24,15 +26,22 @@ func (c *BaseCommand) String() string {
 }
 
 func (c *BaseCommand) IsAck() bool {
-	return c.Command == "ACK"
+	return c.Command == Ack
 }
 
 func (c *BaseCommand) IsAckOf(cmd *BaseCommand) bool {
-	return c.Command == "ACK" && Command(c.Params[0]) == cmd.Command
+	return c.Command == Ack && Command(c.Params[0]) == cmd.Command
+}
+func (c *BaseCommand) IsNackOf(cmd *BaseCommand) bool {
+	return c.Command == Nack && Command(c.Params[0]) == cmd.Command
 }
 
 func (c *BaseCommand) IsHandshake() bool {
-	return c.Command == "HANDSHAKE"
+	return c.Command == Handshake
+}
+
+func (c *BaseCommand) IsPublish() bool {
+	return c.Command == Publish
 }
 
 func NewCommandFromBytes(commandBytes []byte) (*BaseCommand, error) {
@@ -65,7 +74,15 @@ func NewCommand(command Command, params ...string) *BaseCommand {
 }
 
 func NewAckCommand(cmd *BaseCommand) *BaseCommand {
-	return NewCommand("ACK", cmd.String())
+	return NewCommand(Ack, cmd.String())
+}
+
+func NewNackCommand(cmd *BaseCommand) *BaseCommand {
+	return NewCommand(Nack, cmd.String())
+}
+
+func NewPublishCommand(topic string, message string) *BaseCommand {
+	return NewCommand(Publish, topic, message)
 }
 
 func WriteCommand(conn net.Conn, command *BaseCommand) error {

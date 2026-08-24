@@ -1,4 +1,4 @@
-package net
+package command
 
 type ClientType string
 
@@ -8,5 +8,5 @@ const (
 )
 
 func NewHandshakeCommand(clientType ClientType) *BaseCommand {
-	return NewCommand(HandshakeCommand, string(clientType))
+	return NewCommand(Handshake, string(clientType))
 }
