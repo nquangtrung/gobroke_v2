@@ -42,12 +42,15 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		publishData(publisher, "topic1", "apple")
+		log.Println("Finished publishing to topic1 with apple messages.")
 	})
 	wg.Go(func() {
 		publishData(publisher, "topic2", "peach")
+		log.Println("Finished publishing to topic2 with peach messages.")
 	})
 	wg.Go(func() {
 		publishData(publisher, "topic1", "banana")
+		log.Println("Finished publishing to topic1 with banana messages.")
 	})
 
 	wg.Wait()

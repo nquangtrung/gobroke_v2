@@ -34,20 +34,26 @@ func (b *Broker) handlePublisher(conn net.Conn) {
 	// Placeholder for handling publisher logic
 	log.Printf("Handling publisher connection from %s", conn.RemoteAddr())
 	for {
-		cmd, err := command.ReadCommand(conn)
+		cmds, err := command.ReadCommands(conn)
 		if err != nil {
-			log.Printf("Error reading command from publisher %s: %v", conn.RemoteAddr(), err)
+			if errors.Is(err, net.ErrClosed) {
+				log.Printf("Publisher %s closed the connection.", conn.RemoteAddr())
+			} else {
+				log.Printf("Error reading command from publisher %s: %v", conn.RemoteAddr(), err)
+			}
 			return
 		}
 
-		switch {
-		case cmd.IsPublish():
-			log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
-			command.WriteCommand(conn, command.NewAckCommand(cmd))
-			b.publishToSubscribers(cmd)
-		default:
-			log.Printf("Unexpected command from publisher %s: %s", conn.RemoteAddr(), cmd.Command)
-			command.WriteCommand(conn, command.NewNackCommand(cmd))
+		for _, cmd := range cmds {
+			switch {
+			case cmd.IsPublish():
+				log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
+				command.WriteCommand(conn, command.NewAckCommand(cmd))
+				b.publishToSubscribers(cmd)
+			default:
+				log.Printf("Unexpected command from publisher %s: %s", conn.RemoteAddr(), cmd.Command)
+				command.WriteCommand(conn, command.NewNackCommand(cmd))
+			}
 		}
 	}
 }
@@ -83,12 +89,13 @@ func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) {
 }
 
 func (b *Broker) handShakeWithClient(conn net.Conn) error {
-	cmd, err := command.ReadCommand(conn)
+	cmds, err := command.ReadCommands(conn)
 	if err != nil {
 		log.Printf("Failed to read command: %v", err)
 		return err
 	}
 
+	cmd := cmds[0]
 	switch {
 	case !cmd.IsHandshake():
 		log.Printf("Expected handshake command, got: %s", cmd.Command)

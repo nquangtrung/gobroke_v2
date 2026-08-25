@@ -38,17 +38,17 @@ func (s *Subscriber) handshakeWithServer() error {
 	return err
 }
 
-func (s *Subscriber) receive() (*command.BaseCommand, error) {
+func (s *Subscriber) receive() ([]*command.BaseCommand, error) {
 	if s.conn == nil {
 		return nil, errors.New("Connection not established")
 	}
 
-	cmd, err := command.ReadCommand(s.conn)
+	cmds, err := command.ReadCommands(s.conn)
 	if err != nil {
 		return nil, err
 	}
 
-	return cmd, nil
+	return cmds, nil
 }
 
 func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
@@ -74,24 +74,26 @@ func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 func (s *Subscriber) waitForMessage() error {
 	for {
 		log.Println("Waiting for message...")
-		cmd, err := s.receive()
+		cmds, err := s.receive()
 		if err != nil {
 			return err
 		}
 
-		switch {
-		case cmd.IsPublish():
-			err := s.handlePublishCommand(cmd)
-			err = command.WriteAckOrNack(s.conn, cmd, err)
-			if err != nil {
-				log.Printf("Failed to send ACK/NACK: %v", err)
-			}
-		default:
-			log.Printf("Unexpected command received: %s", cmd.Command)
-			nackCmd := command.NewNackCommand(cmd)
-			err = command.WriteCommand(s.conn, nackCmd)
-			if err != nil {
-				log.Printf("Failed to send NACK: %v", err)
+		for _, cmd := range cmds {
+			switch {
+			case cmd.IsPublish():
+				err := s.handlePublishCommand(cmd)
+				err = command.WriteAckOrNack(s.conn, cmd, err)
+				if err != nil {
+					log.Printf("Failed to send ACK/NACK: %v", err)
+				}
+			default:
+				log.Printf("Unexpected command received: %s", cmd.Command)
+				nackCmd := command.NewNackCommand(cmd)
+				err = command.WriteCommand(s.conn, nackCmd)
+				if err != nil {
+					log.Printf("Failed to send NACK: %v", err)
+				}
 			}
 		}
 	}

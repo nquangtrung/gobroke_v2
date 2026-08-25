@@ -18,10 +18,10 @@ func TestNewCommandFromString(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		cmd, err := NewCommandFromString(test.commandStr)
+		cmd, err := NewCommandsFromString(test.commandStr)
 		assert.NoError(t, err)
-		assert.Equal(t, test.expected.Command, cmd.Command)
-		assert.Equal(t, test.expected.Params, cmd.Params)
+		assert.Equal(t, test.expected.Command, cmd[0].Command)
+		assert.Equal(t, test.expected.Params, cmd[0].Params)
 	}
 }
 
@@ -37,9 +37,9 @@ func TestNewCommandFromBytes(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		cmd, err := NewCommandFromBytes(test.commandBytes)
+		cmd, err := NewCommandsFromBytes(test.commandBytes)
 		assert.NoError(t, err)
-		assert.Equal(t, test.expected.Command, cmd.Command)
-		assert.Equal(t, test.expected.Params, cmd.Params)
+		assert.Equal(t, test.expected.Command, cmd[0].Command)
+		assert.Equal(t, test.expected.Params, cmd[0].Params)
 	}
 }

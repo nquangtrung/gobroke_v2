@@ -1,10 +1,13 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"strings"
+
+	"trontria.com/gobroke/v2/internal/utils"
 )
 
 type Command string
@@ -28,10 +31,32 @@ func (c *BaseCommand) String() string {
 func (c *BaseCommand) IsAck() bool {
 	return c.Command == Ack
 }
+func (c *BaseCommand) IsNack() bool {
+	return c.Command == Nack
+}
 
 func (c *BaseCommand) IsAckOf(cmd *BaseCommand) bool {
-	return c.Command == Ack && Command(c.Params[0]) == cmd.Command
+	if c.Command != Ack && c.Command != Nack {
+		return false
+	}
+
+	if len(c.Params) == 0 {
+		return false
+	}
+
+	if Command(c.Params[0]) != cmd.Command {
+		return false
+	}
+
+	for i, param := range c.Params[1:] {
+		if i >= len(cmd.Params) || param != cmd.Params[i] {
+			return false
+		}
+	}
+
+	return true
 }
+
 func (c *BaseCommand) IsNackOf(cmd *BaseCommand) bool {
 	return c.Command == Nack && Command(c.Params[0]) == cmd.Command
 }
@@ -44,26 +69,42 @@ func (c *BaseCommand) IsPublish() bool {
 	return c.Command == Publish
 }
 
-func NewCommandFromBytes(commandBytes []byte) (*BaseCommand, error) {
+func (c *BaseCommand) IsSame(cmd BaseCommand) bool {
+	if c.Command != cmd.Command {
+		return false
+	}
+	if len(c.Params) != len(cmd.Params) {
+		return false
+	}
+	for i, param := range c.Params {
+		if param != cmd.Params[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func NewCommandsFromBytes(commandBytes []byte) ([]*BaseCommand, error) {
 	if len(commandBytes) == 0 {
 		return nil, fmt.Errorf("command bytes are empty")
 	}
 
 	commandStr := strings.Trim(string(commandBytes), "\x00")
-	return NewCommandFromString(commandStr)
+	return NewCommandsFromString(commandStr)
 }
 
-func NewCommandFromString(commandStr string) (*BaseCommand, error) {
-	if commandStr == "" {
-		return nil, fmt.Errorf("command string is empty")
-	}
+func NewCommandsFromString(commandStr string) ([]*BaseCommand, error) {
+	commands := utils.Filter(strings.Split(commandStr, "\n"), func(cmd string) bool {
+		return cmd != ""
+	})
+	return utils.Map(commands, func(cmdStr string) (*BaseCommand, error) {
+		parts := strings.Split(strings.Trim(cmdStr, "\n"), " ")
+		if len(parts) == 0 {
+			return nil, fmt.Errorf("command string is empty")
+		}
 
-	parts := strings.Split(strings.Trim(commandStr, "\n"), " ")
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("command string is empty")
-	}
-
-	return NewCommand(Command(parts[0]), parts[1:]...), nil
+		return NewCommand(Command(parts[0]), parts[1:]...), nil
+	})
 }
 
 func NewCommand(command Command, params ...string) *BaseCommand {
@@ -106,20 +147,25 @@ func WriteCommand(conn net.Conn, command *BaseCommand) error {
 	return nil
 }
 
-func ReadCommand(conn net.Conn) (*BaseCommand, error) {
+func ReadCommands(conn net.Conn) ([]*BaseCommand, error) {
 	buf := make([]byte, 4096)
 
 	// Read data from the connection.
 	n, err := conn.Read(buf)
 	if err != nil {
-		log.Printf("Failed to read data: %v", err)
-		return nil, err
+		if errors.Is(err, net.ErrClosed) {
+			log.Println("Connection closed, stop reading commands.")
+			return nil, err
+		} else {
+			log.Printf("Failed to read data: %v", err)
+			return nil, err
+		}
 	}
 
 	log.Printf("Received data %v", string(buf[:n]))
-	command, err := NewCommandFromBytes(buf[:n])
+	commands, err := NewCommandsFromBytes(buf[:n])
 
-	return command, err
+	return commands, err
 }
 
 func WriteCommandAndWaitForAck(conn net.Conn, command *BaseCommand) error {
@@ -128,13 +174,13 @@ func WriteCommandAndWaitForAck(conn net.Conn, command *BaseCommand) error {
 		return err
 	}
 
-	response, err := ReadCommand(conn)
+	response, err := ReadCommands(conn)
 	if err != nil {
 		return err
 	}
 
-	if !response.IsAckOf(command) {
-		return fmt.Errorf("expected ACK for command %s, but got: %s", command.String(), response.String())
+	if !response[0].IsAckOf(command) {
+		return fmt.Errorf("expected ACK for command %s, but got: %s", command.String(), response[0].String())
 	}
 
 	return nil
