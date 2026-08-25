@@ -54,3 +54,12 @@ func (t *Topic) GetSubscribers() []SubscriberConnection {
 	defer t.mu.Unlock()
 	return append([]SubscriberConnection(nil), t.subscribers...)
 }
+
+func (t *Topic) CloseAllSubscribers() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, subscriber := range t.subscribers {
+		subscriber.conn.Close()
+	}
+	t.subscribers = nil
+}

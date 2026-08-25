@@ -1,7 +1,6 @@
 package command
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -153,13 +152,7 @@ func ReadCommands(conn net.Conn) ([]*BaseCommand, error) {
 	// Read data from the connection.
 	n, err := conn.Read(buf)
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			log.Println("Connection closed, stop reading commands.")
-			return nil, err
-		} else {
-			log.Printf("Failed to read data: %v", err)
-			return nil, err
-		}
+		return nil, fmt.Errorf("failed to read from connection: %w", err)
 	}
 
 	log.Printf("Received data %v", string(buf[:n]))

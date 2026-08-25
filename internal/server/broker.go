@@ -137,6 +137,9 @@ func (b *Broker) handleConnection(conn net.Conn) {
 }
 
 func (b *Broker) Start() {
+	defer func() {
+		log.Println("Accept loop stopped.")
+	}()
 	log.Println("Starting server...")
 	socket, err := netter.CreateServerSocket(b.params.Type)
 	b.socket = socket
@@ -144,24 +147,51 @@ func (b *Broker) Start() {
 		log.Fatalf("Failed to create socket: %v", err)
 	}
 
-	defer socket.Close()
 	log.Printf("Server listening on %s", socket.Addr())
 	for {
 		conn, err := socket.Accept()
-		if err != nil {
+		switch {
+		case errors.Is(err, net.ErrClosed):
+			log.Println("Server socket closed, stopping accept loop.")
+			return
+		case err != nil:
 			log.Printf("Failed to accept connection: %v", err)
-			if errors.Is(err, net.ErrClosed) {
-				break
-			} else {
-				continue
-			}
+			continue
 		}
+
 		go b.handleConnection(conn)
 	}
 }
 
+func (b *Broker) stopPublishers() {
+	b.publishersMutex.Lock()
+	defer b.publishersMutex.Unlock()
+
+	for _, publisher := range b.publishers {
+		err := publisher.conn.Close()
+		if err != nil {
+			log.Printf("Failed to close publisher connection: %v", err)
+		} else {
+			log.Printf("Closed publisher connection: %s", publisher.conn.RemoteAddr())
+		}
+	}
+	b.publishers = nil
+}
+
+func (b *Broker) stopSubscribers() {
+	b.topicsMutex.Lock()
+	defer b.topicsMutex.Unlock()
+
+	for _, topic := range b.topics {
+		topic.CloseAllSubscribers()
+	}
+	b.topics = make(map[string]*Topic)
+}
+
 func (b *Broker) Stop() error {
 	log.Println("Stopping broker...")
+	b.stopPublishers()
+	b.stopSubscribers()
 	if b.socket != nil {
 		err := b.socket.Close()
 		if err != nil {

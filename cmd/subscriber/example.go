@@ -20,7 +20,10 @@ func main() {
 		},
 	})
 	utils.GuardInterrupt(subscriber)
-	subscriber.Start()
+	err := subscriber.Start()
+	if err != nil {
+		log.Fatalf("Failed to start subscriber: %v", err)
+	}
 	for {
 	}
 }
