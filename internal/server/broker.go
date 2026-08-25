@@ -62,6 +62,8 @@ func (b *Broker) publisherLoop(conn net.Conn) {
 				log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
 				command.WriteCommand(conn, command.NewAckCommand(cmd))
 				b.publishToSubscribers(cmd)
+			case cmd.IsAck() || cmd.IsNack():
+				log.Printf("Received %s command from publisher %s", cmd.Command, conn.RemoteAddr())
 			case cmd.IsKeepAlive():
 				log.Printf("Received keep-alive command from publisher %s", conn.RemoteAddr())
 			default:
@@ -128,6 +130,8 @@ func (b *Broker) subscriberLoop(conn net.Conn) {
 			switch {
 			case cmd.IsKeepAlive():
 				log.Printf("Received keep-alive command from subscriber %s", conn.RemoteAddr())
+			case cmd.IsAck() || cmd.IsNack():
+				log.Printf("Received %s command from subscriber %s", cmd.Command, conn.RemoteAddr())
 			default:
 				log.Printf("Unexpected command from subscriber %s: %s", conn.RemoteAddr(), cmd.Command)
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -156,10 +160,12 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 		log.Printf("Registered new publisher from %s", conn.RemoteAddr())
 		go b.publisherLoop(conn)
 		command.WriteCommand(conn, command.NewAckCommand(cmd))
+		b.sendConfig(conn)
 	case cmd.Params[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
 		go b.handleSubscriber(conn, cmd)
 		command.WriteCommand(conn, command.NewAckCommand(cmd))
+		b.sendConfig(conn)
 	default:
 		log.Printf("Unknown client type: %s", cmd.Params[0])
 		command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -178,6 +184,16 @@ func (b *Broker) handleConnection(conn net.Conn) {
 		return
 	}
 	log.Printf("Handshake successful with %s", conn.RemoteAddr())
+}
+
+func (b *Broker) sendConfig(conn net.Conn) error {
+	config := map[string]any{
+		"keep_alive": b.params.KeepAlive.Seconds(),
+	}
+
+	cmd := command.NewCommandConfig(config)
+	err := command.WriteCommand(conn, cmd)
+	return err
 }
 
 func (b *Broker) Start() {

@@ -18,6 +18,7 @@ const (
 	Nack      Command = "NACK"
 	Publish   Command = "PUBLISH"
 	KeepAlive Command = "KEEPALIVE"
+	Config    Command = "CONFIG"
 )
 
 type BaseCommand struct {
@@ -35,7 +36,9 @@ func (c *BaseCommand) IsAck() bool {
 func (c *BaseCommand) IsNack() bool {
 	return c.Command == Nack
 }
-
+func (c *BaseCommand) IsConfig() bool {
+	return c.Command == Config
+}
 func (c *BaseCommand) IsAckOf(cmd *BaseCommand) bool {
 	if c.Command != Ack && c.Command != Nack {
 		return false

@@ -121,10 +121,25 @@ func (p *Publisher) receiveLoop() {
 				} else {
 					log.Printf("Max retries reached for command %v. Giving up.", rejectedCmd)
 				}
+			case cmd.IsConfig():
+				log.Printf("Received config command: %v", cmd)
+				config, err := command.ParseCommandConfig(cmd)
+				if err != nil {
+					log.Printf("Failed to parse config command: %v", err)
+					continue
+				}
+				p.handleConfig(config)
 			default:
 				log.Printf("Received unexpected command: %v", cmd)
 			}
 		}
+	}
+}
+
+func (p *Publisher) handleConfig(config map[string]any) {
+	log.Printf("Received config: %v", config)
+	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
+		p.params.KeepAlive = keepAlive
 	}
 }
 

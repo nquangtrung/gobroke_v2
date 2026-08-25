@@ -63,7 +63,7 @@ func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 func (s *Subscriber) receiveLoop() {
 	for {
 		log.Println("Waiting for message...")
-		cmds, err := command.ReadCommands(s.conn, time.Second*30)
+		cmds, err := command.ReadCommands(s.conn, s.params.KeepAlive)
 		var netErr net.Error
 		switch {
 		case errors.Is(err, io.EOF):
@@ -92,6 +92,12 @@ func (s *Subscriber) receiveLoop() {
 				if err != nil {
 					log.Printf("Failed to send ACK/NACK: %v", err)
 				}
+			case cmd.IsAck() || cmd.IsNack():
+				log.Printf("Received %s command from server: %s", cmd.Command, cmd.String())
+			case cmd.IsConfig():
+				log.Printf("Received config command from server: %s", cmd.String())
+				config, _ := command.ParseCommandConfig(cmd)
+				s.handleConfig(config)
 			default:
 				log.Printf("Unexpected command received: %s", cmd.Command)
 				nackCmd := command.NewNackCommand(cmd)
@@ -101,6 +107,13 @@ func (s *Subscriber) receiveLoop() {
 				}
 			}
 		}
+	}
+}
+
+func (s *Subscriber) handleConfig(config map[string]any) {
+	log.Printf("Received config: %v", config)
+	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
+		s.params.KeepAlive = keepAlive
 	}
 }
 
@@ -136,11 +149,21 @@ type SubscriberParams struct {
 	Handler func(topic string, message string)
 
 	MaxWorker int
+	KeepAlive time.Duration
 }
 
 func New(params SubscriberParams) *Subscriber {
+	resolvedParams := SubscriberParams{
+		Type:       params.Type,
+		Address:    params.Address,
+		SocketPath: params.SocketPath,
+		Topic:      params.Topic,
+		Handler:    params.Handler,
+		MaxWorker:  utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker),
+		KeepAlive:  utils.Ternary(params.KeepAlive <= 0, 30*time.Second, params.KeepAlive),
+	}
 	return &Subscriber{
-		params: params,
-		worker: utils.NewWorker(utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker)),
+		params: resolvedParams,
+		worker: utils.NewWorker(resolvedParams.MaxWorker),
 	}
 }
