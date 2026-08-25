@@ -1,0 +1,20 @@
+[
+  {
+    "label": "Run server",
+    "command": "go run cmd/server/server.go",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Run subscriber",
+    "command": "go run cmd/subscriber/example.go",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Run publisher",
+    "command": "go run cmd/publisher/example.go",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+  }
+]
