@@ -60,8 +60,12 @@ func (p *Publisher) handshakeWithServer() error {
 }
 
 func (p *Publisher) Start() error {
-	log.Println("Starting publisher...")
-	conn, err := netter.CreateClientConnection(p.params.Type)
+	log.Println("Starting publisher...", p.params)
+	conn, err := netter.CreateClientConnection(netter.ConnectionParams{
+		Type:       p.params.Type,
+		Address:    p.params.Address,
+		SocketPath: p.params.SocketPath,
+	})
 	if err != nil {
 		p.Stop()
 		return err
@@ -150,6 +154,9 @@ func (p *Publisher) Publish(topic string, message string) error {
 
 type PublisherParams struct {
 	Type       netter.ConnectionType
+	Address    string
+	SocketPath string
+
 	BufferSize int
 	Timeout    time.Duration
 	MaxRetries int
@@ -159,6 +166,8 @@ type PublisherParams struct {
 func New(params PublisherParams) *Publisher {
 	resolvedParams := PublisherParams{
 		Type:       params.Type,
+		Address:    utils.Ternary(params.Address != "", params.Address, "localhost:7749"),
+		SocketPath: utils.Ternary(params.SocketPath != "", params.SocketPath, "/tmp/gobroke.sock"),
 		BufferSize: utils.Ternary(params.BufferSize == 0, 10, params.BufferSize),
 		Timeout:    utils.Ternary(params.Timeout == 0, time.Second*1, params.Timeout),
 		MaxRetries: utils.Ternary(params.MaxRetries == 0, 3, params.MaxRetries),

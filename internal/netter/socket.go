@@ -12,16 +12,22 @@ const (
 	TCP
 )
 
-func CreateServerSocket(t ConnectionType) (net.Listener, error) {
-	switch t {
+type ConnectionParams struct {
+	Type       ConnectionType
+	Address    string
+	SocketPath string
+}
+
+func CreateServerSocket(params ConnectionParams) (net.Listener, error) {
+	switch params.Type {
 	case UNIX:
-		socket, err := net.Listen("unix", "/tmp/gobroke.sock")
+		socket, err := net.Listen("unix", params.SocketPath)
 		if err != nil {
 			return nil, err
 		}
 		return socket, nil
 	case TCP:
-		socket, err := net.Listen("tcp", "localhost:8080")
+		socket, err := net.Listen("tcp", params.Address)
 		if err != nil {
 			return nil, err
 		}
@@ -30,16 +36,16 @@ func CreateServerSocket(t ConnectionType) (net.Listener, error) {
 		return nil, fmt.Errorf("Unsupported connection type")
 	}
 }
-func CreateClientConnection(t ConnectionType) (net.Conn, error) {
-	switch t {
+func CreateClientConnection(params ConnectionParams) (net.Conn, error) {
+	switch params.Type {
 	case UNIX:
-		socket, err := net.Dial("unix", "/tmp/gobroke.sock")
+		socket, err := net.Dial("unix", params.SocketPath)
 		if err != nil {
 			return nil, err
 		}
 		return socket, nil
 	case TCP:
-		socket, err := net.Dial("tcp", "localhost:8080")
+		socket, err := net.Dial("tcp", params.Address)
 		if err != nil {
 			return nil, err
 		}

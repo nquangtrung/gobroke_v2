@@ -141,7 +141,11 @@ func (b *Broker) Start() {
 		log.Println("Accept loop stopped.")
 	}()
 	log.Println("Starting server...")
-	socket, err := netter.CreateServerSocket(b.params.Type)
+	socket, err := netter.CreateServerSocket(netter.ConnectionParams{
+		Type:       b.params.Type,
+		Address:    b.params.Address,
+		SocketPath: b.params.SocketPath,
+	})
 	b.socket = socket
 	if err != nil {
 		log.Fatalf("Failed to create socket: %v", err)
@@ -204,7 +208,9 @@ func (b *Broker) Stop() error {
 }
 
 type BrokerParams struct {
-	Type netter.ConnectionType
+	Type       netter.ConnectionType
+	Address    string
+	SocketPath string
 }
 
 func New(params BrokerParams) *Broker {

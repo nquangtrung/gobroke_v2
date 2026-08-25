@@ -105,7 +105,11 @@ func (s *Subscriber) waitForMessage() error {
 }
 
 func (s *Subscriber) Start() error {
-	conn, err := netter.CreateClientConnection(s.params.Type)
+	conn, err := netter.CreateClientConnection(netter.ConnectionParams{
+		Type:       s.params.Type,
+		Address:    s.params.Address,
+		SocketPath: s.params.SocketPath,
+	})
 	if err != nil {
 		s.Stop()
 		return err
@@ -124,7 +128,10 @@ func (s *Subscriber) Start() error {
 }
 
 type SubscriberParams struct {
-	Type    netter.ConnectionType
+	Type       netter.ConnectionType
+	Address    string
+	SocketPath string
+
 	Topic   string
 	Handler func(topic string, message string)
 

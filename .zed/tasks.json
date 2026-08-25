@@ -1,19 +1,43 @@
 [
   {
-    "label": "Run server",
-    "command": "go run cmd/server/server.go",
+    "label": "Run server UNIX",
+    "command": "go run cmd/server/server.go --transport=UNIX",
     "allow_concurrent_runs": false,
     "use_new_terminal": false,
   },
   {
-    "label": "Run subscriber",
-    "command": "go run cmd/subscriber/example.go",
+    "label": "Run server TCP",
+    "command": "go run cmd/server/server.go --transport=TCP",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Run subscriber TCP",
+    "command": "go run cmd/subscriber/example.go --transport=TCP --topic=topic1",
     "allow_concurrent_runs": true,
     "use_new_terminal": true,
   },
   {
-    "label": "Run publisher",
-    "command": "go run cmd/publisher/example.go",
+    "label": "Run subscriber UNIX",
+    "command": "go run cmd/subscriber/example.go --transport=UNIX --topic=topic1",
+    "allow_concurrent_runs": true,
+    "use_new_terminal": true,
+  },
+  {
+    "label": "Run publisher TCP",
+    "command": "go run cmd/publisher/example.go --transport=TCP --topic=topic1 --message=banana",
+    "allow_concurrent_runs": true,
+    "use_new_terminal": true,
+  },
+  {
+    "label": "Run publisher UNIX",
+    "command": "go run cmd/publisher/example.go --transport=UNIX --topic=topic1 --message=banana",
+    "allow_concurrent_runs": true,
+    "use_new_terminal": true,
+  },
+  {
+    "label": "Run publishers",
+    "command": "./publishers.sh",
     "allow_concurrent_runs": true,
     "use_new_terminal": true,
   }
