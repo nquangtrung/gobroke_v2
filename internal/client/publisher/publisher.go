@@ -130,6 +130,7 @@ func (p *Publisher) receiveLoop() {
 
 func (p *Publisher) publishLoop() {
 	for {
+		timeout := time.After(p.params.KeepAlive)
 		select {
 		case cmd := <-p.buffer.Channel():
 			err := command.WriteCommand(p.conn, cmd)
@@ -138,6 +139,16 @@ func (p *Publisher) publishLoop() {
 			} else {
 				log.Printf("Published message: %v", cmd)
 				p.pending.AddCommand(cmd)
+			}
+		case <-timeout:
+			log.Println("Keep-alive timeout reached, sending heartbeat.")
+			heartbeatCmd := command.NewKeepAliveCommand()
+			err := command.WriteCommand(p.conn, heartbeatCmd)
+			if err != nil {
+				log.Printf("Failed to send heartbeat command, server might have gone away: %v", err)
+				p.Stop()
+			} else {
+				log.Println("Heartbeat sent successfully.")
 			}
 		case <-p.stopChan:
 			log.Println("Stopping publish loop.")
@@ -161,6 +172,7 @@ type PublisherParams struct {
 	Timeout    time.Duration
 	MaxRetries int
 	Drop       utils.DropType
+	KeepAlive  time.Duration
 }
 
 func New(params PublisherParams) *Publisher {
@@ -172,6 +184,7 @@ func New(params PublisherParams) *Publisher {
 		Timeout:    utils.Ternary(params.Timeout == 0, time.Second*1, params.Timeout),
 		MaxRetries: utils.Ternary(params.MaxRetries == 0, 3, params.MaxRetries),
 		Drop:       utils.Ternary(params.Drop == 0, utils.DropNewest, params.Drop),
+		KeepAlive:  utils.Ternary(params.KeepAlive == 0, time.Second*30, params.KeepAlive),
 	}
 
 	return &Publisher{

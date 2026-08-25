@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"trontria.com/gobroke/v2/internal/utils"
 )
@@ -67,6 +68,9 @@ func (c *BaseCommand) IsHandshake() bool {
 
 func (c *BaseCommand) IsPublish() bool {
 	return c.Command == Publish
+}
+func (c *BaseCommand) IsKeepAlive() bool {
+	return c.Command == KeepAlive
 }
 
 func (c *BaseCommand) IsSame(cmd BaseCommand) bool {
@@ -135,13 +139,16 @@ func WriteCommand(conn net.Conn, command *BaseCommand) error {
 	return nil
 }
 
-func ReadCommands(conn net.Conn) ([]*BaseCommand, error) {
+func ReadCommands(conn net.Conn, timeout ...time.Duration) ([]*BaseCommand, error) {
 	buf := make([]byte, 4096)
 
 	// Read data from the connection.
+	if len(timeout) > 0 {
+		conn.SetReadDeadline(time.Now().Add(timeout[0])) // Set a read deadline to avoid blocking indefinitely
+	}
 	n, err := conn.Read(buf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read from connection: %w", err)
+		return nil, err
 	}
 
 	log.Printf("Received data %v", string(buf[:n]))

@@ -7,9 +7,11 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"trontria.com/gobroke/v2/internal/command"
 	"trontria.com/gobroke/v2/internal/netter"
+	"trontria.com/gobroke/v2/internal/utils"
 )
 
 type PublisherConnection struct {
@@ -31,17 +33,23 @@ type Broker struct {
 	topics      map[string]*Topic
 }
 
-func (b *Broker) handlePublisher(conn net.Conn) {
+func (b *Broker) publisherLoop(conn net.Conn) {
 	// Placeholder for handling publisher logic
 	log.Printf("Handling publisher connection from %s", conn.RemoteAddr())
 	for {
-		cmds, err := command.ReadCommands(conn)
+		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
+		var netErr net.Error
+
 		switch {
 		case errors.Is(err, net.ErrClosed):
-			log.Printf("Connection closed by publisher %s", conn.RemoteAddr())
+			log.Printf("Connection closed broker %s", conn.RemoteAddr())
 			return
 		case errors.Is(err, io.EOF):
 			log.Printf("Connection closed by publisher %s", conn.RemoteAddr())
+			return
+		case errors.As(err, &netErr) && netErr.Timeout():
+			log.Printf("Timeout reading from publisher %s: %v", conn.RemoteAddr(), err)
+			conn.Close()
 			return
 		case err != nil:
 			log.Printf("Failed to read command from publisher %s: %v", conn.RemoteAddr(), err)
@@ -54,6 +62,8 @@ func (b *Broker) handlePublisher(conn net.Conn) {
 				log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
 				command.WriteCommand(conn, command.NewAckCommand(cmd))
 				b.publishToSubscribers(cmd)
+			case cmd.IsKeepAlive():
+				log.Printf("Received keep-alive command from publisher %s", conn.RemoteAddr())
 			default:
 				log.Printf("Unexpected command from publisher %s: %s", conn.RemoteAddr(), cmd.Command)
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -90,10 +100,44 @@ func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) {
 	subscriber := SubscriberConnection{conn: conn}
 	topic.AddSubscriber(subscriber)
 	log.Printf("Subscriber %s added to topic %s", conn.RemoteAddr(), topicName)
+
+	b.subscriberLoop(conn)
+}
+
+func (b *Broker) subscriberLoop(conn net.Conn) {
+	for {
+		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
+		var netErr net.Error
+		switch {
+		case errors.Is(err, net.ErrClosed):
+			log.Printf("Connection closed broker %s", conn.RemoteAddr())
+			return
+		case errors.Is(err, io.EOF):
+			log.Printf("Connection closed by subscriber %s", conn.RemoteAddr())
+			return
+		case errors.As(err, &netErr) && netErr.Timeout():
+			log.Printf("Timeout reading from subscriber %s: %v", conn.RemoteAddr(), err)
+			conn.Close()
+			return
+		case err != nil:
+			log.Printf("Failed to read command from subscriber %s: %v", conn.RemoteAddr(), err)
+			continue
+		}
+
+		for _, cmd := range cmds {
+			switch {
+			case cmd.IsKeepAlive():
+				log.Printf("Received keep-alive command from subscriber %s", conn.RemoteAddr())
+			default:
+				log.Printf("Unexpected command from subscriber %s: %s", conn.RemoteAddr(), cmd.Command)
+				command.WriteCommand(conn, command.NewNackCommand(cmd))
+			}
+		}
+	}
 }
 
 func (b *Broker) handShakeWithClient(conn net.Conn) error {
-	cmds, err := command.ReadCommands(conn)
+	cmds, err := command.ReadCommands(conn, time.Second*5)
 	if err != nil {
 		log.Printf("Failed to read command: %v", err)
 		return err
@@ -110,7 +154,7 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 		b.publishers = append(b.publishers, PublisherConnection{conn: conn})
 		b.publishersMutex.Unlock()
 		log.Printf("Registered new publisher from %s", conn.RemoteAddr())
-		go b.handlePublisher(conn)
+		go b.publisherLoop(conn)
 		command.WriteCommand(conn, command.NewAckCommand(cmd))
 	case cmd.Params[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
@@ -211,11 +255,18 @@ type BrokerParams struct {
 	Type       netter.ConnectionType
 	Address    string
 	SocketPath string
+	KeepAlive  time.Duration
 }
 
 func New(params BrokerParams) *Broker {
+	resolvedParams := BrokerParams{
+		Type:       params.Type,
+		Address:    utils.Ternary(params.Address == "", "localhost:7749", params.Address),
+		SocketPath: utils.Ternary(params.SocketPath == "", "/tmp/gobroke.sock", params.SocketPath),
+		KeepAlive:  utils.Ternary(params.KeepAlive == 0, time.Second*30, params.KeepAlive),
+	}
 	return &Broker{
-		params: params,
+		params: resolvedParams,
 		topics: make(map[string]*Topic),
 	}
 }

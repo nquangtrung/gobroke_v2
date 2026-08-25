@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 
 	"trontria.com/gobroke/v2/internal/command"
 	"trontria.com/gobroke/v2/internal/netter"
@@ -39,15 +40,6 @@ func (s *Subscriber) handshakeWithServer() error {
 	return err
 }
 
-func (s *Subscriber) receive() ([]*command.BaseCommand, error) {
-	if s.conn == nil {
-		return nil, errors.New("Connection not established")
-	}
-
-	cmds, err := command.ReadCommands(s.conn)
-	return cmds, err
-}
-
 func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 	if len(cmd.Params) < 2 {
 		return errors.New("Invalid publish command: missing parameters")
@@ -68,17 +60,25 @@ func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
 
 	return nil
 }
-func (s *Subscriber) waitForMessage() error {
+func (s *Subscriber) receiveLoop() {
 	for {
 		log.Println("Waiting for message...")
-		cmds, err := s.receive()
+		cmds, err := command.ReadCommands(s.conn, time.Second*30)
+		var netErr net.Error
 		switch {
 		case errors.Is(err, io.EOF):
 			log.Println("Connection closed by server.")
-			return nil
+			return
 		case errors.Is(err, net.ErrClosed):
 			log.Println("Connection closed, stop receiving command.")
-			return nil
+			return
+		case errors.As(err, &netErr) && err.(net.Error).Timeout():
+			err := command.WriteCommand(s.conn, command.NewKeepAliveCommand())
+			if err != nil {
+				log.Printf("Failed to send keep-alive command: %v, the server might have gone away", err)
+				return
+			}
+			continue
 		case err != nil:
 			log.Printf("Failed to receive command: %v", err)
 			continue
@@ -122,7 +122,7 @@ func (s *Subscriber) Start() error {
 		return err
 	}
 
-	go s.waitForMessage()
+	go s.receiveLoop()
 
 	return nil
 }
