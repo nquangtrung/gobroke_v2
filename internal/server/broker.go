@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -35,13 +36,16 @@ func (b *Broker) handlePublisher(conn net.Conn) {
 	log.Printf("Handling publisher connection from %s", conn.RemoteAddr())
 	for {
 		cmds, err := command.ReadCommands(conn)
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				log.Printf("Publisher %s closed the connection.", conn.RemoteAddr())
-			} else {
-				log.Printf("Error reading command from publisher %s: %v", conn.RemoteAddr(), err)
-			}
+		switch {
+		case errors.Is(err, net.ErrClosed):
+			log.Printf("Connection closed by publisher %s", conn.RemoteAddr())
 			return
+		case errors.Is(err, io.EOF):
+			log.Printf("Connection closed by publisher %s", conn.RemoteAddr())
+			return
+		case err != nil:
+			log.Printf("Failed to read command from publisher %s: %v", conn.RemoteAddr(), err)
+			continue
 		}
 
 		for _, cmd := range cmds {

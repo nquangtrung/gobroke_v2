@@ -3,6 +3,7 @@ package publisher
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -16,9 +17,9 @@ type Publisher struct {
 	params PublisherParams
 	conn   net.Conn
 
-	awaitingAck command.CommandQueue
-	retries     utils.RetryMap[command.BaseCommand]
-	buffer      utils.DroppableBuffer[*command.BaseCommand]
+	pending command.PendingCommandQueue
+	retries utils.RetryMap[command.BaseCommand]
+	buffer  utils.DroppableBuffer[*command.BaseCommand]
 
 	stopChan chan struct{}
 }
@@ -84,23 +85,26 @@ func (p *Publisher) Start() error {
 func (p *Publisher) receiveLoop() {
 	for {
 		cmds, err := command.ReadCommands(p.conn)
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				log.Println("Connection closed, stop receiving command.")
-				return
-			} else {
-				log.Printf("Failed to read publish response: %v", err)
-			}
+		switch {
+		case errors.Is(err, net.ErrClosed):
+			log.Println("Connection closed, stop receiving command.")
+			return
+		case errors.Is(err, io.EOF):
+			log.Printf("Connection closed by server: %v", err)
+			return
+		case err != nil:
+			log.Printf("Failed to read publish response: %v", err)
+			continue
 		}
 
 		for _, cmd := range cmds {
 			switch {
 			case cmd.IsAck():
 				log.Printf("Received ACK command: %v", cmd)
-				p.awaitingAck.GetAndRemoveCommandFromAck(cmd)
+				p.pending.GetAndRemoveCommandFromAck(cmd)
 			case cmd.IsNack():
 				log.Printf("Received NACK command: %v", cmd)
-				rejectedCmd := p.awaitingAck.GetAndRemoveCommandFromAck(cmd)
+				rejectedCmd := p.pending.GetAndRemoveCommandFromAck(cmd)
 				if rejectedCmd == nil {
 					continue
 				}
@@ -129,7 +133,7 @@ func (p *Publisher) publishLoop() {
 				log.Printf("Failed to send publish command: %v", err)
 			} else {
 				log.Printf("Published message: %v", cmd)
-				p.awaitingAck.AddCommand(cmd)
+				p.pending.AddCommand(cmd)
 			}
 		case <-p.stopChan:
 			log.Println("Stopping publish loop.")

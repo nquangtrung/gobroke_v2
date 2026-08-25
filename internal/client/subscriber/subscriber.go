@@ -3,6 +3,7 @@ package subscriber
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 
@@ -14,7 +15,7 @@ import (
 type Subscriber struct {
 	params SubscriberParams
 	conn   net.Conn
-	worker *Worker
+	worker *utils.Worker
 }
 
 func (s *Subscriber) Stop() error {
@@ -44,11 +45,7 @@ func (s *Subscriber) receive() ([]*command.BaseCommand, error) {
 	}
 
 	cmds, err := command.ReadCommands(s.conn)
-	if err != nil {
-		return nil, err
-	}
-
-	return cmds, nil
+	return cmds, err
 }
 
 func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
@@ -75,8 +72,16 @@ func (s *Subscriber) waitForMessage() error {
 	for {
 		log.Println("Waiting for message...")
 		cmds, err := s.receive()
-		if err != nil {
-			return err
+		switch {
+		case errors.Is(err, io.EOF):
+			log.Println("Connection closed by server.")
+			return nil
+		case errors.Is(err, net.ErrClosed):
+			log.Println("Connection closed, stop receiving command.")
+			return nil
+		case err != nil:
+			log.Printf("Failed to receive command: %v", err)
+			continue
 		}
 
 		for _, cmd := range cmds {
@@ -129,6 +134,6 @@ type SubscriberParams struct {
 func New(params SubscriberParams) *Subscriber {
 	return &Subscriber{
 		params: params,
-		worker: NewWorker(utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker)),
+		worker: utils.NewWorker(utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker)),
 	}
 }
