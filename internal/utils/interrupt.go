@@ -19,7 +19,7 @@ func GuardInterrupt(stopper Stopper) {
 	// Start a goroutine to handle the signal
 	go func() {
 		<-sigChan // Wait for a signal
-		log.Println("Shutting down gracefully...")
+		log.Println("Interrupt received, shutting down...")
 		err := stopper.Stop() // Call the provided stop function
 		if err != nil {
 			log.Printf("Error during shutdown: %v", err)
