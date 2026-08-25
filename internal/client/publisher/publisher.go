@@ -17,7 +17,7 @@ type Publisher struct {
 	params PublisherParams
 	conn   net.Conn
 
-	pending command.PendingCommandQueue
+	pending command.PendingQueue
 	retries utils.RetryMap[command.BaseCommand]
 	buffer  utils.DroppableBuffer[*command.BaseCommand]
 

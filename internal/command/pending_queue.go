@@ -4,19 +4,19 @@ import (
 	"sync"
 )
 
-type PendingCommandQueue struct {
+type PendingQueue struct {
 	awaitingAckCommandsMutex sync.Mutex
 	awaitingAckCommands      []*BaseCommand
 }
 
-func (cq *PendingCommandQueue) AddCommand(cmd *BaseCommand) {
+func (cq *PendingQueue) AddCommand(cmd *BaseCommand) {
 	cq.awaitingAckCommandsMutex.Lock()
 	defer cq.awaitingAckCommandsMutex.Unlock()
 
 	cq.awaitingAckCommands = append(cq.awaitingAckCommands, cmd)
 }
 
-func (cq *PendingCommandQueue) RemoveCommand(cmd *BaseCommand) {
+func (cq *PendingQueue) RemoveCommand(cmd *BaseCommand) {
 	cq.awaitingAckCommandsMutex.Lock()
 	defer cq.awaitingAckCommandsMutex.Unlock()
 
@@ -28,7 +28,7 @@ func (cq *PendingCommandQueue) RemoveCommand(cmd *BaseCommand) {
 	}
 }
 
-func (cq *PendingCommandQueue) GetAndRemoveCommandFromAck(ackCommand *BaseCommand) *BaseCommand {
+func (cq *PendingQueue) GetAndRemoveCommandFromAck(ackCommand *BaseCommand) *BaseCommand {
 	cq.awaitingAckCommandsMutex.Lock()
 	defer cq.awaitingAckCommandsMutex.Unlock()
 

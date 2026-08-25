@@ -16,6 +16,7 @@ const (
 	Ack       Command = "ACK"
 	Nack      Command = "NACK"
 	Publish   Command = "PUBLISH"
+	KeepAlive Command = "KEEPALIVE"
 )
 
 type BaseCommand struct {
@@ -111,18 +112,6 @@ func NewCommand(command Command, params ...string) *BaseCommand {
 		Command: command,
 		Params:  params,
 	}
-}
-
-func NewAckCommand(cmd *BaseCommand) *BaseCommand {
-	return NewCommand(Ack, cmd.String())
-}
-
-func NewNackCommand(cmd *BaseCommand) *BaseCommand {
-	return NewCommand(Nack, cmd.String())
-}
-
-func NewPublishCommand(topic string, message string) *BaseCommand {
-	return NewCommand(Publish, topic, message)
 }
 
 func WriteCommand(conn net.Conn, command *BaseCommand) error {
