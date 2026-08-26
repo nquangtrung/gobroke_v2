@@ -18,8 +18,8 @@ type Publisher struct {
 	conn   net.Conn
 
 	pending command.PendingQueue
-	retries utils.RetryMap[command.BaseCommand]
-	buffer  utils.DroppableBuffer[*command.BaseCommand]
+	retries utils.RetryMap[command.Command]
+	buffer  utils.DroppableBuffer[command.Command]
 
 	stopChan chan struct{}
 
@@ -42,7 +42,7 @@ func (p *Publisher) Stop() error {
 	close(p.stopChan)
 
 	// Drain the buffer and send any remaining commands
-	p.buffer.Drain(func(cmd *command.BaseCommand) {
+	p.buffer.Drain(func(cmd command.Command) {
 		log.Printf("Draining command from buffer: %v", cmd)
 		command.WriteCommand(p.conn, cmd)
 	})
@@ -105,26 +105,26 @@ func (p *Publisher) receiveLoop() {
 		}
 
 		for _, cmd := range cmds {
-			switch {
-			case cmd.IsAck():
+			switch cmd := cmd.(type) {
+			case *command.AckCommand:
 				log.Printf("Received ACK command: %v", cmd)
 				p.pending.GetAndRemoveCommandFromAck(cmd)
-			case cmd.IsNack():
+			case *command.NackCommand:
 				log.Printf("Received NACK command: %v", cmd)
 				rejectedCmd := p.pending.GetAndRemoveCommandFromAck(cmd)
 				if rejectedCmd == nil {
 					continue
 				}
 				log.Printf("Command %v was rejected by the server.", rejectedCmd)
-				retries := p.retries.GetRetryCount(rejectedCmd)
+				retries := p.retries.GetRetryCount(&rejectedCmd)
 				if retries < p.params.MaxRetries {
 					log.Printf("Retrying command %v (attempt %d)", rejectedCmd, retries+1)
-					p.retries.AddRetry(rejectedCmd)
+					p.retries.AddRetry(&rejectedCmd)
 					p.buffer.Add(rejectedCmd)
 				} else {
 					log.Printf("Max retries reached for command %v. Giving up.", rejectedCmd)
 				}
-			case cmd.IsConfig():
+			case *command.ConfigCommand:
 				log.Printf("Received config command: %v", cmd)
 				config, err := command.ParseCommandConfig(cmd)
 				if err != nil {
@@ -210,7 +210,7 @@ func New(params PublisherParams) *Publisher {
 
 	return &Publisher{
 		params: resolvedParams,
-		buffer: *utils.NewDroppableBuffer[*command.BaseCommand](
+		buffer: *utils.NewDroppableBuffer[command.Command](
 			resolvedParams.BufferSize,
 			resolvedParams.Drop,
 			resolvedParams.Timeout,

@@ -7,10 +7,24 @@ const (
 	Subscriber ClientType = "SUBSCRIBER"
 )
 
-func NewHandshakeCommand(clientType ClientType, topic ...string) *BaseCommand {
+type HandshakeCommand struct {
+	BaseCommand
+}
+
+func NewHandshakeCommand(clientType ClientType, topic ...string) Command {
 	if len(topic) > 0 {
-		return NewCommand(Handshake, string(clientType), topic[0])
+		return &HandshakeCommand{
+			BaseCommand: BaseCommand{
+				action: Handshake,
+				params: []string{string(clientType), topic[0]},
+			},
+		}
 	}
 
-	return NewCommand(Handshake, string(clientType))
+	return &HandshakeCommand{
+		BaseCommand: BaseCommand{
+			action: Handshake,
+			params: []string{string(clientType)},
+		},
+	}
 }

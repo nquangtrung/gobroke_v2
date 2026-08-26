@@ -10,14 +10,14 @@ type Topic struct {
 	name        string
 	mu          sync.Mutex
 	subscribers []*SubscriberConnection
-	messages    map[string][]*command.BaseCommand
+	messages    map[string][]command.PublishableCommand
 }
 
 func newTopic(name string) *Topic {
 	return &Topic{
 		name:        name,
 		subscribers: []*SubscriberConnection{},
-		messages:    make(map[string][]*command.BaseCommand),
+		messages:    make(map[string][]command.PublishableCommand),
 	}
 }
 
@@ -38,13 +38,14 @@ func (t *Topic) RemoveSubscriber(subscriber *SubscriberConnection) {
 	}
 }
 
-func (t *Topic) Broadcast(publisher *PublisherConnection, cmd *command.BaseCommand) error {
+func (t *Topic) Broadcast(publisher *PublisherConnection, cmd command.PublishableCommand) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	t.messages[publisher.id] = append(t.messages[publisher.id], cmd)
 	for _, subscriber := range t.subscribers {
-		err := command.WriteCommandAndWaitForAck(subscriber.conn, cmd)
+		msg := command.NewMessageCommandFromCommand(publisher.id, cmd)
+		err := command.WriteCommandAndWaitForAck(subscriber.conn, msg)
 		if err != nil {
 			// TODO handle error, maybe remove subscriber if connection is broken
 			continue

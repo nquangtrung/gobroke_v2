@@ -10,89 +10,89 @@ import (
 	"trontria.com/gobroke/v2/internal/utils"
 )
 
-type Command string
+type Action string
 
 const (
-	Handshake Command = "HANDSHAKE"
-	Ack       Command = "ACK"
-	Nack      Command = "NACK"
-	Publish   Command = "PUBLISH"
-	Message   Command = "MESSAGE"
-	KeepAlive Command = "KEEPALIVE"
-	Config    Command = "CONFIG"
+	Handshake Action = "HANDSHAKE"
+	Ack       Action = "ACK"
+	Nack      Action = "NACK"
+	Publish   Action = "PUBLISH"
+	Message   Action = "MESSAGE"
+	KeepAlive Action = "KEEPALIVE"
+	Config    Action = "CONFIG"
 )
 
+type Command interface {
+	String() string
+
+	IsAck() bool
+	IsNack() bool
+	IsConfig() bool
+	IsHandshake() bool
+	IsPublish() bool
+	IsKeepAlive() bool
+	IsSame(cmd Command) bool
+
+	Action() Action
+	Params() []string
+}
+
 type BaseCommand struct {
-	Command Command
-	Params  []string
+	action Action
+	params []string
+}
+
+func (c *BaseCommand) Action() Action {
+	return c.action
+}
+
+func (c *BaseCommand) Params() []string {
+	return c.params
 }
 
 func (c *BaseCommand) String() string {
-	return fmt.Sprintf("%s %s", c.Command, strings.Join(c.Params, " "))
+	return fmt.Sprintf("%s %s", c.Action(), strings.Join(c.Params(), " "))
 }
 
 func (c *BaseCommand) IsAck() bool {
-	return c.Command == Ack
+	return c.action == Ack
 }
+
 func (c *BaseCommand) IsNack() bool {
-	return c.Command == Nack
+	return c.action == Nack
 }
+
 func (c *BaseCommand) IsConfig() bool {
-	return c.Command == Config
-}
-func (c *BaseCommand) IsAckOf(cmd *BaseCommand) bool {
-	if c.Command != Ack && c.Command != Nack {
-		return false
-	}
-
-	if len(c.Params) == 0 {
-		return false
-	}
-
-	if Command(c.Params[0]) != cmd.Command {
-		return false
-	}
-
-	for i, param := range c.Params[1:] {
-		if i >= len(cmd.Params) || param != cmd.Params[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (c *BaseCommand) IsNackOf(cmd *BaseCommand) bool {
-	return c.Command == Nack && Command(c.Params[0]) == cmd.Command
+	return c.action == Config
 }
 
 func (c *BaseCommand) IsHandshake() bool {
-	return c.Command == Handshake
+	return c.action == Handshake
 }
 
 func (c *BaseCommand) IsPublish() bool {
-	return c.Command == Publish
+	return c.action == Publish
 }
 func (c *BaseCommand) IsKeepAlive() bool {
-	return c.Command == KeepAlive
+	return c.action == KeepAlive
 }
 
-func (c *BaseCommand) IsSame(cmd BaseCommand) bool {
-	if c.Command != cmd.Command {
+func (c *BaseCommand) IsSame(cmd Command) bool {
+	if c.action != cmd.Action() {
 		return false
 	}
-	if len(c.Params) != len(cmd.Params) {
+	if len(c.params) != len(cmd.Params()) {
 		return false
 	}
-	for i, param := range c.Params {
-		if param != cmd.Params[i] {
+	for i, param := range c.params {
+		if param != cmd.Params()[i] {
 			return false
 		}
 	}
 	return true
 }
 
-func NewCommandsFromBytes(commandBytes []byte) ([]*BaseCommand, error) {
+func NewCommandsFromBytes(commandBytes []byte) ([]Command, error) {
 	if len(commandBytes) == 0 {
 		return nil, fmt.Errorf("command bytes are empty")
 	}
@@ -101,28 +101,50 @@ func NewCommandsFromBytes(commandBytes []byte) ([]*BaseCommand, error) {
 	return NewCommandsFromString(commandStr)
 }
 
-func NewCommandsFromString(commandStr string) ([]*BaseCommand, error) {
-	commands := utils.Filter(strings.Split(commandStr, "\n"), func(cmd string) bool {
-		return cmd != ""
-	})
-	return utils.Map(commands, func(cmdStr string) (*BaseCommand, error) {
-		parts := strings.Split(strings.Trim(cmdStr, "\n"), " ")
-		if len(parts) == 0 {
-			return nil, fmt.Errorf("command string is empty")
-		}
+func NewCommandFromString(cmdStr string) (Command, error) {
+	parts := strings.Split(strings.Trim(cmdStr, "\n"), " ")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("command string is empty")
+	}
 
-		return NewCommand(Command(parts[0]), parts[1:]...), nil
-	})
-}
-
-func NewCommand(command Command, params ...string) *BaseCommand {
-	return &BaseCommand{
-		Command: command,
-		Params:  params,
+	switch Action(parts[0]) {
+	case Handshake:
+		return NewHandshakeCommand(ClientType(parts[1]), parts[2:]...), nil
+	case Ack:
+		return NewAckCommand(NewCommand(Action(parts[1]), parts[2:]...)), nil
+	case Nack:
+		return NewNackCommand(NewCommand(Action(parts[1]), parts[2:]...)), nil
+	case Publish:
+		return NewPublishCommand(parts[1], parts[2]), nil
+	case Message:
+		return NewMessageCommand(parts[1], parts[2], parts[3]), nil
+	case KeepAlive:
+		return NewKeepAliveCommand(), nil
+	case Config:
+		return NewCommandConfig(parts[1]), nil
+	default:
+		return NewCommand(Action(parts[0]), parts[1:]...), nil
 	}
 }
 
-func WriteCommand(conn net.Conn, command *BaseCommand) error {
+func NewCommandsFromString(commandStr string) ([]Command, error) {
+	commands := utils.Filter(strings.Split(commandStr, "\n"), func(cmd string) bool {
+		return cmd != ""
+	})
+
+	return utils.Map(commands, func(cmdStr string) (Command, error) {
+		return NewCommandFromString(cmdStr)
+	})
+}
+
+func NewCommand(action Action, params ...string) Command {
+	return &BaseCommand{
+		action: action,
+		params: params,
+	}
+}
+
+func WriteCommand(conn net.Conn, command Command) error {
 	if conn == nil {
 		return fmt.Errorf("connection is nil")
 	}
@@ -143,7 +165,7 @@ func WriteCommand(conn net.Conn, command *BaseCommand) error {
 	return nil
 }
 
-func ReadCommands(conn net.Conn, timeout ...time.Duration) ([]*BaseCommand, error) {
+func ReadCommands(conn net.Conn, timeout ...time.Duration) ([]Command, error) {
 	buf := make([]byte, 4096)
 
 	// Read data from the connection.
@@ -161,7 +183,7 @@ func ReadCommands(conn net.Conn, timeout ...time.Duration) ([]*BaseCommand, erro
 	return commands, err
 }
 
-func WriteCommandAndWaitForAck(conn net.Conn, command *BaseCommand) error {
+func WriteCommandAndWaitForAck(conn net.Conn, command Command) error {
 	err := WriteCommand(conn, command)
 	if err != nil {
 		return err
@@ -172,14 +194,14 @@ func WriteCommandAndWaitForAck(conn net.Conn, command *BaseCommand) error {
 		return err
 	}
 
-	if !response[0].IsAckOf(command) {
+	if !response[0].(*WrapCommand).IsOf(command) || !response[0].IsAck() {
 		return fmt.Errorf("expected ACK for command %s, but got: %s", command.String(), response[0].String())
 	}
 
 	return nil
 }
 
-func WriteAckOrNack(conn net.Conn, command *BaseCommand, err error) error {
+func WriteAckOrNack(conn net.Conn, command Command, err error) error {
 	if err != nil {
 		log.Printf("Sending NACK for command %s due to error: %v", command.String(), err)
 		nackCmd := NewNackCommand(command)

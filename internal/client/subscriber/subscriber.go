@@ -41,13 +41,13 @@ func (s *Subscriber) handshakeWithServer() error {
 	return err
 }
 
-func (s *Subscriber) handlePublishCommand(cmd *command.BaseCommand) error {
-	if len(cmd.Params) < 2 {
+func (s *Subscriber) handlePublishCommand(cmd command.Command) error {
+	if len(cmd.Params()) < 2 {
 		return errors.New("Invalid publish command: missing parameters")
 	}
 
-	topic := cmd.Params[0]
-	message := cmd.Params[1]
+	topic := cmd.Params()[0]
+	message := cmd.Params()[1]
 
 	log.Printf("Received message on topic %s: %s", topic, message)
 
@@ -94,13 +94,13 @@ func (s *Subscriber) receiveLoop() {
 					log.Printf("Failed to send ACK/NACK: %v", err)
 				}
 			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from server: %s", cmd.Command, cmd.String())
+				log.Printf("Received %s command from server: %s", cmd.Action(), cmd.String())
 			case cmd.IsConfig():
 				log.Printf("Received config command from server: %s", cmd.String())
 				config, _ := command.ParseCommandConfig(cmd)
 				s.handleConfig(config)
 			default:
-				log.Printf("Unexpected command received: %s", cmd.Command)
+				log.Printf("Unexpected command received: %s", cmd.Action())
 				nackCmd := command.NewNackCommand(cmd)
 				err = command.WriteCommand(s.conn, nackCmd)
 				if err != nil {

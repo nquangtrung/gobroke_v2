@@ -53,26 +53,26 @@ func (b *Broker) publisherLoop(publisher *PublisherConnection) {
 		for _, cmd := range cmds {
 			switch {
 			case cmd.IsPublish():
-				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params)
+				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params())
 				command.WriteCommand(conn, command.NewAckCommand(cmd))
-				go b.publishToSubscribers(publisher, cmd)
+				go b.publishToSubscribers(publisher, cmd.(command.PublishableCommand))
 			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from publisher %s", cmd.Command, publisher.id)
+				log.Printf("Received %s command from publisher %s", cmd.Action(), publisher.id)
 			case cmd.IsKeepAlive():
 				log.Printf("Received keep-alive command from publisher %s", publisher.id)
 			default:
-				log.Printf("Unexpected command from publisher %s: %s", publisher.id, cmd.Command)
+				log.Printf("Unexpected command from publisher %s: %s", publisher.id, cmd.Action())
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
 			}
 		}
 	}
 }
 
-func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *command.BaseCommand) {
+func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd command.PublishableCommand) {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
-	topicName := cmd.Params[0]
+	topicName := cmd.Params()[0]
 	topic, exists := b.topics[topicName]
 	if !exists {
 		log.Printf("No subscribers for topic %s", topicName)
@@ -81,11 +81,11 @@ func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *comma
 	topic.Broadcast(publisher, cmd)
 }
 
-func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) *SubscriberConnection {
+func (b *Broker) handleSubscriber(conn net.Conn, cmd command.Command) *SubscriberConnection {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
-	topicName := cmd.Params[1]
+	topicName := cmd.Params()[1]
 	topic, exists := b.topics[topicName]
 	if !exists {
 		topic = newTopic(topicName)
@@ -125,13 +125,13 @@ func (b *Broker) subscriberLoop(subscriber *SubscriberConnection) {
 		}
 
 		for _, cmd := range cmds {
-			switch {
-			case cmd.IsKeepAlive():
+			switch cmd := cmd.(type) {
+			case *command.KeepAliveCommand:
 				log.Printf("Received keep-alive command from subscriber %s", subscriber.id)
-			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from subscriber %s", cmd.Command, subscriber.id)
+			case *command.AckCommand, *command.NackCommand:
+				log.Printf("Received %s command from subscriber %s", cmd.Action(), subscriber.id)
 			default:
-				log.Printf("Unexpected command from subscriber %s: %s", subscriber.id, cmd.Command)
+				log.Printf("Unexpected command from subscriber %s: %s", subscriber.id, cmd.Action())
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
 			}
 		}
@@ -160,23 +160,23 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 	cmd := cmds[0]
 	switch {
 	case !cmd.IsHandshake():
-		log.Printf("Expected handshake command, got: %s", cmd.Command)
+		log.Printf("Expected handshake command, got: %s", cmd.Action())
 		command.WriteCommand(conn, command.NewNackCommand(cmd))
-		return fmt.Errorf("expected handshake command, but got: %s", cmd.Command)
-	case cmd.Params[0] == string(command.Publisher):
+		return fmt.Errorf("expected handshake command, but got: %s", cmd.Action())
+	case cmd.Params()[0] == string(command.Publisher):
 		publisher := b.addPublisher(conn)
 		go b.publisherLoop(publisher)
 		command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
 		b.sendConfig(publisher)
-	case cmd.Params[0] == string(command.Subscriber):
+	case cmd.Params()[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
 		subscriber := b.handleSubscriber(conn, cmd)
 		command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
 		b.sendConfig(subscriber)
 	default:
-		log.Printf("Unknown client type: %s", cmd.Params[0])
+		log.Printf("Unknown client type: %s", cmd.Params()[0])
 		command.WriteCommand(conn, command.NewNackCommand(cmd))
-		return fmt.Errorf("unknown client type: %s", cmd.Params[0])
+		return fmt.Errorf("unknown client type: %s", cmd.Params()[0])
 	}
 
 	return nil
@@ -199,7 +199,7 @@ func (b *Broker) sendConfig(conn Connection) error {
 		"id":         conn.ID(),
 	}
 
-	cmd := command.NewCommandConfig(config)
+	cmd := command.NewCommandConfigFromConfig(config)
 	err := command.WriteCommand(conn.Conn(), cmd)
 	return err
 }

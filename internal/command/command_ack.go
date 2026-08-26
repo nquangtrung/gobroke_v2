@@ -1,9 +1,35 @@
 package command
 
-func NewAckCommand(cmd *BaseCommand) *BaseCommand {
-	return NewCommand(Ack, cmd.String())
+type AckCommand struct {
+	WrapCommand
 }
 
-func NewNackCommand(cmd *BaseCommand) *BaseCommand {
-	return NewCommand(Nack, cmd.String())
+type NackCommand struct {
+	WrapCommand
+}
+
+func NewAckCommand(cmd Command) Command {
+	return &AckCommand{
+		WrapCommand: WrapCommand{
+			BaseCommand: BaseCommand{
+				action: Ack,
+				params: append([]string{
+					string(cmd.Action()),
+				}, cmd.Params()...),
+			},
+		},
+	}
+}
+
+func NewNackCommand(cmd Command) Command {
+	return &NackCommand{
+		WrapCommand: WrapCommand{
+			BaseCommand: BaseCommand{
+				action: Nack,
+				params: append([]string{
+					string(cmd.Action()),
+				}, cmd.Params()...),
+			},
+		},
+	}
 }
