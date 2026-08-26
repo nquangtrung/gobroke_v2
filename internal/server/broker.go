@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,9 +25,11 @@ type Broker struct {
 
 	topicsMutex sync.Mutex
 	topics      map[string]*Topic
+
+	wg sync.WaitGroup
 }
 
-func (b *Broker) publisherLoop(publisher *PublisherConnection) {
+func (b *Broker) publisherLoop(_ context.Context, publisher *PublisherConnection) {
 	conn := publisher.conn
 	log := log.New(log.Writer(), fmt.Sprintf("[Publisher:%s] ", publisher.id), log.LstdFlags)
 	log.Printf("Handling publisher connection from %s", publisher.id)
@@ -54,7 +57,7 @@ func (b *Broker) publisherLoop(publisher *PublisherConnection) {
 			switch {
 			case cmd.IsPublish():
 				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params())
-				command.WriteCommand(conn, command.NewAckCommand(cmd))
+				go command.WriteCommand(conn, command.NewAckCommand(cmd))
 				go b.publishToSubscribers(publisher, cmd.(command.PublishableCommand))
 			case cmd.IsAck() || cmd.IsNack():
 				log.Printf("Received %s command from publisher %s", cmd.Action(), publisher.id)
@@ -76,12 +79,13 @@ func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd comman
 	topic, exists := b.topics[topicName]
 	if !exists {
 		log.Printf("No subscribers for topic %s", topicName)
+		return
 	}
 
 	topic.Broadcast(publisher, cmd)
 }
 
-func (b *Broker) handleSubscriber(conn net.Conn, cmd command.Command) *SubscriberConnection {
+func (b *Broker) addSubscriber(conn net.Conn, cmd command.Command) *SubscriberConnection {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
@@ -95,12 +99,11 @@ func (b *Broker) handleSubscriber(conn net.Conn, cmd command.Command) *Subscribe
 	subscriber := newSubscriberConnection(conn)
 	topic.AddSubscriber(subscriber)
 	log.Printf("Subscriber %s (%s) added to topic %s", conn.RemoteAddr(), subscriber.id, topicName)
-	go b.subscriberLoop(subscriber)
 
 	return subscriber
 }
 
-func (b *Broker) subscriberLoop(subscriber *SubscriberConnection) {
+func (b *Broker) subscriberLoop(_ context.Context, subscriber *SubscriberConnection) {
 	conn := subscriber.conn
 	log := log.New(log.Writer(), fmt.Sprintf("[Subscriber:%s] ", subscriber.id), log.LstdFlags)
 	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
@@ -150,7 +153,7 @@ func (b *Broker) addPublisher(conn net.Conn) *PublisherConnection {
 	return publisher
 }
 
-func (b *Broker) handShakeWithClient(conn net.Conn) error {
+func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) error {
 	cmds, err := command.ReadCommands(conn, time.Second*5)
 	if err != nil {
 		log.Printf("Failed to read command: %v", err)
@@ -165,12 +168,13 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 		return fmt.Errorf("expected handshake command, but got: %s", cmd.Action())
 	case cmd.Params()[0] == string(command.Publisher):
 		publisher := b.addPublisher(conn)
-		go b.publisherLoop(publisher)
+		b.wg.Go(func() { b.publisherLoop(ctx, publisher) })
 		command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
 		b.sendConfig(publisher)
 	case cmd.Params()[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
-		subscriber := b.handleSubscriber(conn, cmd)
+		subscriber := b.addSubscriber(conn, cmd)
+		b.wg.Go(func() { b.subscriberLoop(ctx, subscriber) })
 		command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
 		b.sendConfig(subscriber)
 	default:
@@ -182,10 +186,10 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 	return nil
 }
 
-func (b *Broker) handleConnection(conn net.Conn) {
+func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	log.Printf("Accepted connection from %s", conn.RemoteAddr())
 
-	err := b.handShakeWithClient(conn)
+	err := b.handShakeWithClient(ctx, conn)
 	if err != nil {
 		log.Printf("Handshake failed: %v", err)
 		return
@@ -204,7 +208,32 @@ func (b *Broker) sendConfig(conn Connection) error {
 	return err
 }
 
-func (b *Broker) Start() {
+func (b *Broker) acceptLoop(ctx context.Context, socket net.Listener) {
+	for {
+		conn, err := socket.Accept()
+		switch {
+		case errors.Is(err, net.ErrClosed):
+			log.Println("Server socket closed, stopping accept loop.")
+			return
+		case err != nil:
+			log.Printf("Failed to accept connection: %v", err)
+			continue
+		}
+
+		b.wg.Go(func() { b.handleConnection(ctx, conn) })
+	}
+}
+
+func (b *Broker) Wait() {
+	b.wg.Wait()
+}
+
+func (b *Broker) waitForCancel(ctx context.Context) {
+	<-ctx.Done()
+	b.Stop()
+}
+
+func (b *Broker) Start(ctx context.Context) {
 	log.SetPrefix("[Broker] ")
 	defer func() {
 		log.Println("Accept loop stopped.")
@@ -221,19 +250,8 @@ func (b *Broker) Start() {
 	}
 
 	log.Printf("Server listening on %s", socket.Addr())
-	for {
-		conn, err := socket.Accept()
-		switch {
-		case errors.Is(err, net.ErrClosed):
-			log.Println("Server socket closed, stopping accept loop.")
-			return
-		case err != nil:
-			log.Printf("Failed to accept connection: %v", err)
-			continue
-		}
-
-		go b.handleConnection(conn)
-	}
+	b.wg.Go(func() { b.acceptLoop(ctx, socket) })
+	b.wg.Go(func() { b.waitForCancel(ctx) })
 }
 
 func (b *Broker) stopPublishers() {

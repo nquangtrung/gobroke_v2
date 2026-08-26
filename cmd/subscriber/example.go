@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"trontria.com/gobroke/v2/internal/client/subscriber"
@@ -12,6 +15,9 @@ import (
 )
 
 func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	arguments := utils.NamedArguments(os.Args[1:])
 	if _, ok := arguments["help"]; ok {
 		log.Println("Usage: gobroke [--help] [topic] [message]")
@@ -36,11 +42,12 @@ func main() {
 			log.Printf("Handling message on topic %s: %s", topic, message)
 		},
 	})
-	utils.GuardInterrupt(subscriber)
-	err := subscriber.Start()
+	err := subscriber.Start(ctx)
 	if err != nil {
 		log.Fatalf("Failed to start subscriber: %v", err)
 	}
-	for {
-	}
+
+	// Keep the main function running
+	subscriber.Wait()
+	log.Println("Subscriber stopped gracefully.")
 }

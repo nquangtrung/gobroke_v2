@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"trontria.com/gobroke/v2/internal/netter"
 	"trontria.com/gobroke/v2/internal/server"
@@ -10,6 +13,9 @@ import (
 )
 
 func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	arguments := utils.NamedArguments(os.Args[1:])
 	if _, ok := arguments["help"]; ok {
 		log.Println("Usage: gobroke [--help]")
@@ -29,10 +35,7 @@ func main() {
 
 	log.Printf("Starting server with parameters: %+v\n", arguments)
 	broker := server.New(params)
-	utils.GuardInterrupt(broker)
-	go broker.Start()
+	broker.Start(ctx)
 	log.Println("Server is running. Press Ctrl+C to stop.")
-
-	// Block main goroutine until an interrupt signal is received
-	select {}
+	broker.Wait()
 }

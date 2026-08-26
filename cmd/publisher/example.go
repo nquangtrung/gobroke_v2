@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"trontria.com/gobroke/v2/internal/client/publisher"
@@ -28,6 +31,9 @@ func publishData(publisher *publisher.Publisher, topic string, message string) {
 }
 
 func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	arguments := utils.NamedArguments(os.Args[1:])
 	if _, ok := arguments["help"]; ok {
 		log.Println("Usage: gobroke [--help] [topic] [message]")
@@ -61,8 +67,7 @@ func main() {
 
 	log.Printf("Starting publisher with params: %+v", params)
 	publisher := publisher.New(params)
-	utils.GuardInterrupt(publisher)
-	err := publisher.Start()
+	err := publisher.Start(ctx)
 	if err != nil {
 		log.Fatalf("Failed to start publisher: %v", err)
 	}

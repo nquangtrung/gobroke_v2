@@ -1,11 +1,13 @@
 package publisher
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"trontria.com/gobroke/v2/internal/command"
@@ -22,6 +24,7 @@ type Publisher struct {
 	buffer  utils.DroppableBuffer[command.Command]
 
 	stopChan chan struct{}
+	wg       sync.WaitGroup
 
 	id string
 }
@@ -61,7 +64,11 @@ func (p *Publisher) handshakeWithServer() error {
 	return err
 }
 
-func (p *Publisher) Start() error {
+func (p *Publisher) Wait() {
+	p.wg.Wait()
+}
+
+func (p *Publisher) Start(ctx context.Context) error {
 	log.Println("Starting publisher...", p.params)
 	conn, err := netter.CreateClientConnection(netter.ConnectionParams{
 		Type:       p.params.Type,
@@ -83,8 +90,8 @@ func (p *Publisher) Start() error {
 	}
 	log.Println("Handshake successful.")
 
-	go p.receiveLoop()
-	go p.publishLoop()
+	p.wg.Go(func() { p.receiveLoop() })
+	p.wg.Go(func() { p.publishLoop(ctx) })
 
 	return nil
 }
@@ -95,6 +102,7 @@ func (p *Publisher) receiveLoop() {
 		switch {
 		case errors.Is(err, net.ErrClosed):
 			log.Println("Connection closed, stop receiving command.")
+			p.Stop()
 			return
 		case errors.Is(err, io.EOF):
 			log.Printf("Connection closed by server: %v", err)
@@ -149,10 +157,13 @@ func (p *Publisher) handleConfig(config map[string]any) {
 	}
 }
 
-func (p *Publisher) publishLoop() {
+func (p *Publisher) publishLoop(ctx context.Context) {
 	for {
 		timeout := time.After(p.params.KeepAlive)
 		select {
+		case <-ctx.Done():
+			p.Stop()
+			return
 		case cmd := <-p.buffer.Channel():
 			err := command.WriteCommand(p.conn, cmd)
 			if err != nil {

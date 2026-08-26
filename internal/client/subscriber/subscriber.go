@@ -1,11 +1,13 @@
 package subscriber
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"trontria.com/gobroke/v2/internal/command"
@@ -18,6 +20,9 @@ type Subscriber struct {
 	conn   net.Conn
 	worker *utils.Worker
 	id     string
+
+	channel chan command.Command
+	wg      sync.WaitGroup
 }
 
 func (s *Subscriber) Stop() error {
@@ -27,6 +32,9 @@ func (s *Subscriber) Stop() error {
 			return err
 		}
 	}
+
+	close(s.channel)
+	s.worker.Stop()
 	return nil
 }
 
@@ -58,6 +66,45 @@ func (s *Subscriber) handleMessageCommand(cmd *command.MessageCommand) error {
 
 	return nil
 }
+
+func (s *Subscriber) handleLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Subscriber context done, stopping handle loop.")
+			s.Stop()
+			return
+		case cmd, ok := <-s.channel:
+			if !ok {
+				log.Println("Channel closed, stopping handle loop.")
+				return
+			}
+			switch cmd := cmd.(type) {
+			case *command.MessageCommand:
+				log.Printf("Received message command from server: %s", cmd.String())
+				go command.WriteAckOrNack(s.conn, cmd, nil)
+				err := s.handleMessageCommand(cmd)
+				if err != nil {
+					log.Printf("Failed to handle message command: %v", err)
+				}
+			case *command.AckCommand, *command.NackCommand:
+				log.Printf("Received %s command from server: %s", cmd.Action(), cmd.String())
+			case *command.ConfigCommand:
+				log.Printf("Received config command from server: %s", cmd.String())
+				config, _ := cmd.Config()
+				s.handleConfig(config)
+			default:
+				log.Printf("Unexpected command received: %s", cmd.Action())
+				nackCmd := command.NewNackCommand(cmd)
+				err := command.WriteCommand(s.conn, nackCmd)
+				if err != nil {
+					log.Printf("Failed to send NACK: %v", err)
+				}
+			}
+		}
+	}
+}
+
 func (s *Subscriber) receiveLoop() {
 	for {
 		log.Println("Waiting for message...")
@@ -66,6 +113,7 @@ func (s *Subscriber) receiveLoop() {
 		switch {
 		case errors.Is(err, io.EOF):
 			log.Println("Connection closed by server.")
+			s.Stop()
 			return
 		case errors.Is(err, net.ErrClosed):
 			log.Println("Connection closed, stop receiving command.")
@@ -83,27 +131,7 @@ func (s *Subscriber) receiveLoop() {
 		}
 
 		for _, cmd := range cmds {
-			switch cmd := cmd.(type) {
-			case *command.MessageCommand:
-				err := s.handleMessageCommand(cmd)
-				err = command.WriteAckOrNack(s.conn, cmd, err)
-				if err != nil {
-					log.Printf("Failed to send ACK/NACK: %v", err)
-				}
-			case *command.AckCommand, *command.NackCommand:
-				log.Printf("Received %s command from server: %s", cmd.Action(), cmd.String())
-			case *command.ConfigCommand:
-				log.Printf("Received config command from server: %s", cmd.String())
-				config, _ := cmd.Config()
-				s.handleConfig(config)
-			default:
-				log.Printf("Unexpected command received: %s", cmd.Action())
-				nackCmd := command.NewNackCommand(cmd)
-				err = command.WriteCommand(s.conn, nackCmd)
-				if err != nil {
-					log.Printf("Failed to send NACK: %v", err)
-				}
-			}
+			s.channel <- cmd
 		}
 	}
 }
@@ -118,12 +146,29 @@ func (s *Subscriber) handleConfig(config map[string]any) {
 	}
 }
 
-func (s *Subscriber) Start() error {
+func (s *Subscriber) ID() string {
+	return s.id
+}
+
+func (s *Subscriber) Topic() string {
+	return s.params.Topic
+}
+
+func (s *Subscriber) Connection() net.Conn {
+	return s.conn
+}
+
+func (s *Subscriber) Wait() {
+	s.wg.Wait()
+}
+
+func (s *Subscriber) Start(ctx context.Context) error {
 	conn, err := netter.CreateClientConnection(netter.ConnectionParams{
 		Type:       s.params.Type,
 		Address:    s.params.Address,
 		SocketPath: s.params.SocketPath,
 	})
+	log.Printf("Subscriber connected to server @%s (local: %s)", conn.RemoteAddr(), conn.LocalAddr())
 	if err != nil {
 		s.Stop()
 		return err
@@ -136,7 +181,8 @@ func (s *Subscriber) Start() error {
 		return err
 	}
 
-	go s.receiveLoop()
+	s.wg.Go(func() { s.receiveLoop() })
+	s.wg.Go(func() { s.handleLoop(ctx) })
 
 	return nil
 }
@@ -149,8 +195,9 @@ type SubscriberParams struct {
 	Topic   string
 	Handler func(topic string, message string)
 
-	MaxWorker int
-	KeepAlive time.Duration
+	MaxWorker  int
+	KeepAlive  time.Duration
+	BufferSize int
 }
 
 func New(params SubscriberParams) *Subscriber {
@@ -162,9 +209,11 @@ func New(params SubscriberParams) *Subscriber {
 		Handler:    params.Handler,
 		MaxWorker:  utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker),
 		KeepAlive:  utils.Ternary(params.KeepAlive <= 0, 30*time.Second, params.KeepAlive),
+		BufferSize: utils.Ternary(params.BufferSize <= 0, 100, params.BufferSize),
 	}
 	return &Subscriber{
-		params: resolvedParams,
-		worker: utils.NewWorker(resolvedParams.MaxWorker),
+		params:  resolvedParams,
+		worker:  utils.NewWorker(resolvedParams.MaxWorker),
+		channel: make(chan command.Command, resolvedParams.BufferSize),
 	}
 }
