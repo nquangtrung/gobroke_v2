@@ -114,7 +114,7 @@ func (s *Subscriber) receiveLoop() {
 func (s *Subscriber) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
 	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
-		s.params.KeepAlive = keepAlive
+		s.params.KeepAlive = keepAlive / 2
 	}
 	if id, ok := config["id"].(string); ok {
 		s.id = id

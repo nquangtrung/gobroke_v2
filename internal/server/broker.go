@@ -28,6 +28,7 @@ type Broker struct {
 
 func (b *Broker) publisherLoop(publisher *PublisherConnection) {
 	conn := publisher.conn
+	log := log.New(log.Writer(), fmt.Sprintf("[Publisher:%s] ", publisher.id), log.LstdFlags)
 	log.Printf("Handling publisher connection from %s", publisher.id)
 	for {
 		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
@@ -101,6 +102,7 @@ func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) *Subs
 
 func (b *Broker) subscriberLoop(subscriber *SubscriberConnection) {
 	conn := subscriber.conn
+	log := log.New(log.Writer(), fmt.Sprintf("[Subscriber:%s] ", subscriber.id), log.LstdFlags)
 	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
 	for {
 		log.Printf("Waiting for commands from subscriber %s", subscriber.id)
@@ -203,6 +205,7 @@ func (b *Broker) sendConfig(conn Connection) error {
 }
 
 func (b *Broker) Start() {
+	log.SetPrefix("[Broker] ")
 	defer func() {
 		log.Println("Accept loop stopped.")
 	}()

@@ -142,7 +142,7 @@ func (p *Publisher) receiveLoop() {
 func (p *Publisher) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
 	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
-		p.params.KeepAlive = keepAlive
+		p.params.KeepAlive = keepAlive / 2
 	}
 	if id, ok := config["id"].(string); ok {
 		p.id = id
