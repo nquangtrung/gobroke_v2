@@ -69,11 +69,21 @@ func (s *Subscriber) handleMessageCommand(cmd *command.MessageCommand) error {
 
 func (s *Subscriber) handleLoop(ctx context.Context) {
 	for {
+		timeout := time.After(s.params.keepAlive)
+		log.Printf("Waiting for command or keep-alive timeout (%s)...", s.params.keepAlive)
 		select {
 		case <-ctx.Done():
 			log.Println("Subscriber context done, stopping handle loop.")
 			s.Stop()
 			return
+		case <-timeout:
+			log.Println("Keep-alive timeout, sending keep-alive command to server.")
+			err := command.WriteCommand(s.conn, command.NewKeepAliveCommand())
+			if err != nil {
+				log.Printf("Failed to send keep-alive command: %v", err)
+				s.Stop()
+				return
+			}
 		case cmd, ok := <-s.channel:
 			if !ok {
 				log.Println("Channel closed, stopping handle loop.")
@@ -108,7 +118,7 @@ func (s *Subscriber) handleLoop(ctx context.Context) {
 func (s *Subscriber) receiveLoop() {
 	for {
 		log.Println("Waiting for message...")
-		cmds, err := command.ReadCommands(s.conn, s.params.KeepAlive)
+		cmds, err := command.ReadCommands(s.conn, s.params.keepAlive)
 		var netErr net.Error
 		switch {
 		case errors.Is(err, io.EOF):
@@ -138,8 +148,8 @@ func (s *Subscriber) receiveLoop() {
 
 func (s *Subscriber) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
-	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
-		s.params.KeepAlive = keepAlive / 2
+	if keepAlive, ok := config["keep_alive"]; ok {
+		s.params.keepAlive = time.Second * time.Duration(keepAlive.(float64)) / 2
 	}
 	if id, ok := config["id"].(string); ok {
 		s.id = id
@@ -196,7 +206,7 @@ type SubscriberParams struct {
 	Handler func(topic string, message string)
 
 	MaxWorker  int
-	KeepAlive  time.Duration
+	keepAlive  time.Duration
 	BufferSize int
 }
 
@@ -208,7 +218,7 @@ func New(params SubscriberParams) *Subscriber {
 		Topic:      params.Topic,
 		Handler:    params.Handler,
 		MaxWorker:  utils.Ternary(params.MaxWorker <= 0, 1, params.MaxWorker),
-		KeepAlive:  utils.Ternary(params.KeepAlive <= 0, 30*time.Second, params.KeepAlive),
+		keepAlive:  utils.Ternary(params.keepAlive <= 0, 30*time.Second, params.keepAlive),
 		BufferSize: utils.Ternary(params.BufferSize <= 0, 100, params.BufferSize),
 	}
 	return &Subscriber{

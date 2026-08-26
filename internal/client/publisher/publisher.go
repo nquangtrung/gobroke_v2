@@ -149,8 +149,8 @@ func (p *Publisher) receiveLoop() {
 
 func (p *Publisher) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
-	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
-		p.params.KeepAlive = keepAlive / 2
+	if keepAlive, ok := config["keep_alive"]; ok {
+		p.params.keepAlive = time.Second * time.Duration(keepAlive.(float64)) / 2
 	}
 	if id, ok := config["id"].(string); ok {
 		p.id = id
@@ -159,7 +159,7 @@ func (p *Publisher) handleConfig(config map[string]any) {
 
 func (p *Publisher) publishLoop(ctx context.Context) {
 	for {
-		timeout := time.After(p.params.KeepAlive)
+		timeout := time.After(p.params.keepAlive)
 		select {
 		case <-ctx.Done():
 			p.Stop()
@@ -204,7 +204,7 @@ type PublisherParams struct {
 	Timeout    time.Duration
 	MaxRetries int
 	Drop       utils.DropType
-	KeepAlive  time.Duration
+	keepAlive  time.Duration
 }
 
 func New(params PublisherParams) *Publisher {
@@ -216,7 +216,7 @@ func New(params PublisherParams) *Publisher {
 		Timeout:    utils.Ternary(params.Timeout == 0, time.Second*1, params.Timeout),
 		MaxRetries: utils.Ternary(params.MaxRetries == 0, 3, params.MaxRetries),
 		Drop:       utils.Ternary(params.Drop == 0, utils.DropNewest, params.Drop),
-		KeepAlive:  utils.Ternary(params.KeepAlive == 0, time.Second*30, params.KeepAlive),
+		keepAlive:  utils.Ternary(params.keepAlive == 0, time.Second*30, params.keepAlive),
 	}
 
 	return &Publisher{

@@ -82,7 +82,7 @@ func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd comman
 		return
 	}
 
-	topic.Broadcast(publisher, cmd)
+	go topic.Broadcast(publisher, cmd)
 }
 
 func (b *Broker) addSubscriber(conn net.Conn, cmd command.Command) *SubscriberConnection {

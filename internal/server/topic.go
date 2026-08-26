@@ -45,7 +45,7 @@ func (t *Topic) Broadcast(publisher *PublisherConnection, cmd command.Publishabl
 	t.messages[publisher.id] = append(t.messages[publisher.id], cmd)
 	for _, subscriber := range t.subscribers {
 		msg := command.NewMessageCommandFromCommand(publisher.id, cmd)
-		err := command.WriteCommandAndWaitForAck(subscriber.conn, msg)
+		err := command.WriteCommand(subscriber.conn, msg)
 		if err != nil {
 			// TODO handle error, maybe remove subscriber if connection is broken
 			continue
