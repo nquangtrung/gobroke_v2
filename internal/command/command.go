@@ -17,6 +17,7 @@ const (
 	Ack       Command = "ACK"
 	Nack      Command = "NACK"
 	Publish   Command = "PUBLISH"
+	Message   Command = "MESSAGE"
 	KeepAlive Command = "KEEPALIVE"
 	Config    Command = "CONFIG"
 )

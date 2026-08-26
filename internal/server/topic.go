@@ -9,23 +9,25 @@ import (
 type Topic struct {
 	name        string
 	mu          sync.Mutex
-	subscribers []SubscriberConnection
+	subscribers []*SubscriberConnection
+	messages    map[string][]*command.BaseCommand
 }
 
-func NewTopic(name string) *Topic {
+func newTopic(name string) *Topic {
 	return &Topic{
 		name:        name,
-		subscribers: []SubscriberConnection{},
+		subscribers: []*SubscriberConnection{},
+		messages:    make(map[string][]*command.BaseCommand),
 	}
 }
 
-func (t *Topic) AddSubscriber(subscriber SubscriberConnection) {
+func (t *Topic) AddSubscriber(subscriber *SubscriberConnection) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.subscribers = append(t.subscribers, subscriber)
 }
 
-func (t *Topic) RemoveSubscriber(subscriber SubscriberConnection) {
+func (t *Topic) RemoveSubscriber(subscriber *SubscriberConnection) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, sub := range t.subscribers {
@@ -36,9 +38,11 @@ func (t *Topic) RemoveSubscriber(subscriber SubscriberConnection) {
 	}
 }
 
-func (t *Topic) Broadcast(cmd *command.BaseCommand) error {
+func (t *Topic) Broadcast(publisher *PublisherConnection, cmd *command.BaseCommand) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	t.messages[publisher.id] = append(t.messages[publisher.id], cmd)
 	for _, subscriber := range t.subscribers {
 		err := command.WriteCommandAndWaitForAck(subscriber.conn, cmd)
 		if err != nil {
@@ -49,10 +53,10 @@ func (t *Topic) Broadcast(cmd *command.BaseCommand) error {
 	return nil
 }
 
-func (t *Topic) GetSubscribers() []SubscriberConnection {
+func (t *Topic) GetSubscribers() []*SubscriberConnection {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return append([]SubscriberConnection(nil), t.subscribers...)
+	return append([]*SubscriberConnection(nil), t.subscribers...)
 }
 
 func (t *Topic) CloseAllSubscribers() {

@@ -9,33 +9,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"trontria.com/gobroke/v2/internal/command"
 	"trontria.com/gobroke/v2/internal/netter"
 	"trontria.com/gobroke/v2/internal/utils"
 )
-
-type PublisherConnection struct {
-	conn net.Conn
-}
-
-type SubscriberConnection struct {
-	conn net.Conn
-}
 
 type Broker struct {
 	params BrokerParams
 	socket net.Listener
 
 	publishersMutex sync.Mutex
-	publishers      []PublisherConnection
+	publishers      []*PublisherConnection
 
 	topicsMutex sync.Mutex
 	topics      map[string]*Topic
 }
 
-func (b *Broker) publisherLoop(conn net.Conn) {
-	// Placeholder for handling publisher logic
-	log.Printf("Handling publisher connection from %s", conn.RemoteAddr())
+func (b *Broker) publisherLoop(publisher *PublisherConnection) {
+	conn := publisher.conn
+	log.Printf("Handling publisher connection from %s", publisher.id)
 	for {
 		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
 		var netErr net.Error
@@ -45,36 +38,36 @@ func (b *Broker) publisherLoop(conn net.Conn) {
 			log.Printf("Connection closed broker %s", conn.RemoteAddr())
 			return
 		case errors.Is(err, io.EOF):
-			log.Printf("Connection closed by publisher %s", conn.RemoteAddr())
+			log.Printf("Connection closed by publisher %s", publisher.id)
 			return
 		case errors.As(err, &netErr) && netErr.Timeout():
-			log.Printf("Timeout reading from publisher %s: %v", conn.RemoteAddr(), err)
+			log.Printf("Timeout reading from publisher %s: %v", publisher.id, err)
 			conn.Close()
 			return
 		case err != nil:
-			log.Printf("Failed to read command from publisher %s: %v", conn.RemoteAddr(), err)
+			log.Printf("Failed to read command from publisher %s: %v", publisher.id, err)
 			continue
 		}
 
 		for _, cmd := range cmds {
 			switch {
 			case cmd.IsPublish():
-				log.Printf("Received publish command from %s with params: %v", conn.RemoteAddr(), cmd.Params)
+				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params)
 				command.WriteCommand(conn, command.NewAckCommand(cmd))
-				b.publishToSubscribers(cmd)
+				b.publishToSubscribers(publisher, cmd)
 			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from publisher %s", cmd.Command, conn.RemoteAddr())
+				log.Printf("Received %s command from publisher %s", cmd.Command, publisher.id)
 			case cmd.IsKeepAlive():
-				log.Printf("Received keep-alive command from publisher %s", conn.RemoteAddr())
+				log.Printf("Received keep-alive command from publisher %s", publisher.id)
 			default:
-				log.Printf("Unexpected command from publisher %s: %s", conn.RemoteAddr(), cmd.Command)
+				log.Printf("Unexpected command from publisher %s: %s", publisher.id, cmd.Command)
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
 			}
 		}
 	}
 }
 
-func (b *Broker) publishToSubscribers(cmd *command.BaseCommand) error {
+func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *command.BaseCommand) error {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
@@ -85,59 +78,74 @@ func (b *Broker) publishToSubscribers(cmd *command.BaseCommand) error {
 		return fmt.Errorf("no subscribers for topic %s", topicName)
 	}
 
-	return topic.Broadcast(cmd)
+	return topic.Broadcast(publisher, cmd)
 }
 
-func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) {
+func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) *SubscriberConnection {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
 	topicName := cmd.Params[1]
 	topic, exists := b.topics[topicName]
 	if !exists {
-		topic = NewTopic(topicName)
+		topic = newTopic(topicName)
 		b.topics[topicName] = topic
 	}
 
-	subscriber := SubscriberConnection{conn: conn}
+	subscriber := newSubscriberConnection(conn)
 	topic.AddSubscriber(subscriber)
-	log.Printf("Subscriber %s added to topic %s", conn.RemoteAddr(), topicName)
+	log.Printf("Subscriber %s (%s) added to topic %s", conn.RemoteAddr(), subscriber.id, topicName)
+	go b.subscriberLoop(subscriber)
 
-	b.subscriberLoop(conn)
+	return subscriber
 }
 
-func (b *Broker) subscriberLoop(conn net.Conn) {
+func (b *Broker) subscriberLoop(subscriber *SubscriberConnection) {
+	conn := subscriber.conn
+	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
 	for {
 		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
 		var netErr net.Error
 		switch {
 		case errors.Is(err, net.ErrClosed):
-			log.Printf("Connection closed broker %s", conn.RemoteAddr())
+			log.Printf("Connection closed broker %s", subscriber.id)
 			return
 		case errors.Is(err, io.EOF):
-			log.Printf("Connection closed by subscriber %s", conn.RemoteAddr())
+			log.Printf("Connection closed by subscriber %s", subscriber.id)
 			return
 		case errors.As(err, &netErr) && netErr.Timeout():
-			log.Printf("Timeout reading from subscriber %s: %v", conn.RemoteAddr(), err)
+			log.Printf("Timeout reading from subscriber %s: %v", subscriber.id, err)
 			conn.Close()
 			return
 		case err != nil:
-			log.Printf("Failed to read command from subscriber %s: %v", conn.RemoteAddr(), err)
+			log.Printf("Failed to read command from subscriber %s: %v", subscriber.id, err)
 			continue
 		}
 
 		for _, cmd := range cmds {
 			switch {
 			case cmd.IsKeepAlive():
-				log.Printf("Received keep-alive command from subscriber %s", conn.RemoteAddr())
+				log.Printf("Received keep-alive command from subscriber %s", subscriber.id)
 			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from subscriber %s", cmd.Command, conn.RemoteAddr())
+				log.Printf("Received %s command from subscriber %s", cmd.Command, subscriber.id)
 			default:
-				log.Printf("Unexpected command from subscriber %s: %s", conn.RemoteAddr(), cmd.Command)
+				log.Printf("Unexpected command from subscriber %s: %s", subscriber.id, cmd.Command)
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
 			}
 		}
 	}
+}
+
+func (b *Broker) addPublisher(conn net.Conn) *PublisherConnection {
+	b.publishersMutex.Lock()
+	defer b.publishersMutex.Unlock()
+
+	id := uuid.NewString()
+	publisher := newPublisherConnection(conn)
+	b.publishers = append(b.publishers, publisher)
+	log.Printf("Added new publisher from %s, with ID: %s", conn.RemoteAddr(), id)
+
+	return publisher
 }
 
 func (b *Broker) handShakeWithClient(conn net.Conn) error {
@@ -154,18 +162,15 @@ func (b *Broker) handShakeWithClient(conn net.Conn) error {
 		command.WriteCommand(conn, command.NewNackCommand(cmd))
 		return fmt.Errorf("expected handshake command, but got: %s", cmd.Command)
 	case cmd.Params[0] == string(command.Publisher):
-		b.publishersMutex.Lock()
-		b.publishers = append(b.publishers, PublisherConnection{conn: conn})
-		b.publishersMutex.Unlock()
-		log.Printf("Registered new publisher from %s", conn.RemoteAddr())
-		go b.publisherLoop(conn)
-		command.WriteCommand(conn, command.NewAckCommand(cmd))
-		b.sendConfig(conn)
+		publisher := b.addPublisher(conn)
+		go b.publisherLoop(publisher)
+		command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
+		b.sendConfig(publisher)
 	case cmd.Params[0] == string(command.Subscriber):
 		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
-		go b.handleSubscriber(conn, cmd)
-		command.WriteCommand(conn, command.NewAckCommand(cmd))
-		b.sendConfig(conn)
+		subscriber := b.handleSubscriber(conn, cmd)
+		command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
+		b.sendConfig(subscriber)
 	default:
 		log.Printf("Unknown client type: %s", cmd.Params[0])
 		command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -186,13 +191,14 @@ func (b *Broker) handleConnection(conn net.Conn) {
 	log.Printf("Handshake successful with %s", conn.RemoteAddr())
 }
 
-func (b *Broker) sendConfig(conn net.Conn) error {
+func (b *Broker) sendConfig(conn Connection) error {
 	config := map[string]any{
 		"keep_alive": b.params.KeepAlive.Seconds(),
+		"id":         conn.ID(),
 	}
 
 	cmd := command.NewCommandConfig(config)
-	err := command.WriteCommand(conn, cmd)
+	err := command.WriteCommand(conn.Conn(), cmd)
 	return err
 }
 
