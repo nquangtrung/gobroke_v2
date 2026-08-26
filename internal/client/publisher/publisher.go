@@ -22,6 +22,8 @@ type Publisher struct {
 	buffer  utils.DroppableBuffer[*command.BaseCommand]
 
 	stopChan chan struct{}
+
+	id string
 }
 
 func (p *Publisher) Stop() error {
@@ -83,6 +85,7 @@ func (p *Publisher) Start() error {
 
 	go p.receiveLoop()
 	go p.publishLoop()
+
 	return nil
 }
 
@@ -140,6 +143,9 @@ func (p *Publisher) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
 	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
 		p.params.KeepAlive = keepAlive
+	}
+	if id, ok := config["id"].(string); ok {
+		p.id = id
 	}
 }
 

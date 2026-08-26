@@ -54,7 +54,7 @@ func (b *Broker) publisherLoop(publisher *PublisherConnection) {
 			case cmd.IsPublish():
 				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params)
 				command.WriteCommand(conn, command.NewAckCommand(cmd))
-				b.publishToSubscribers(publisher, cmd)
+				go b.publishToSubscribers(publisher, cmd)
 			case cmd.IsAck() || cmd.IsNack():
 				log.Printf("Received %s command from publisher %s", cmd.Command, publisher.id)
 			case cmd.IsKeepAlive():
@@ -67,7 +67,7 @@ func (b *Broker) publisherLoop(publisher *PublisherConnection) {
 	}
 }
 
-func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *command.BaseCommand) error {
+func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *command.BaseCommand) {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
@@ -75,10 +75,9 @@ func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd *comma
 	topic, exists := b.topics[topicName]
 	if !exists {
 		log.Printf("No subscribers for topic %s", topicName)
-		return fmt.Errorf("no subscribers for topic %s", topicName)
 	}
 
-	return topic.Broadcast(publisher, cmd)
+	topic.Broadcast(publisher, cmd)
 }
 
 func (b *Broker) handleSubscriber(conn net.Conn, cmd *command.BaseCommand) *SubscriberConnection {
@@ -104,6 +103,7 @@ func (b *Broker) subscriberLoop(subscriber *SubscriberConnection) {
 	conn := subscriber.conn
 	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
 	for {
+		log.Printf("Waiting for commands from subscriber %s", subscriber.id)
 		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
 		var netErr net.Error
 		switch {

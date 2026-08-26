@@ -17,6 +17,7 @@ type Subscriber struct {
 	params SubscriberParams
 	conn   net.Conn
 	worker *utils.Worker
+	id     string
 }
 
 func (s *Subscriber) Stop() error {
@@ -114,6 +115,9 @@ func (s *Subscriber) handleConfig(config map[string]any) {
 	log.Printf("Received config: %v", config)
 	if keepAlive, ok := config["keep_alive"].(time.Duration); ok {
 		s.params.KeepAlive = keepAlive
+	}
+	if id, ok := config["id"].(string); ok {
+		s.id = id
 	}
 }
 
