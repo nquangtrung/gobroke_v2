@@ -194,7 +194,7 @@ func WriteCommandAndWaitForAck(conn net.Conn, command Command) error {
 		return err
 	}
 
-	if !response[0].(*WrapCommand).IsOf(command) || !response[0].IsAck() {
+	if !response[0].(IsOfer).IsOf(command) || !response[0].IsAck() {
 		return fmt.Errorf("expected ACK for command %s, but got: %s", command.String(), response[0].String())
 	}
 
