@@ -126,7 +126,7 @@ func (p *Publisher) receiveLoop() {
 				}
 			case *command.ConfigCommand:
 				log.Printf("Received config command: %v", cmd)
-				config, err := command.ParseCommandConfig(cmd)
+				config, err := cmd.Config()
 				if err != nil {
 					log.Printf("Failed to parse config command: %v", err)
 					continue

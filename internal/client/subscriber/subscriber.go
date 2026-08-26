@@ -94,7 +94,7 @@ func (s *Subscriber) receiveLoop() {
 				log.Printf("Received %s command from server: %s", cmd.Action(), cmd.String())
 			case *command.ConfigCommand:
 				log.Printf("Received config command from server: %s", cmd.String())
-				config, _ := command.ParseCommandConfig(cmd)
+				config, _ := cmd.Config()
 				s.handleConfig(config)
 			default:
 				log.Printf("Unexpected command received: %s", cmd.Action())
