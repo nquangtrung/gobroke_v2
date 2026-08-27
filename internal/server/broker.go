@@ -107,6 +107,22 @@ func (b *Broker) removePublisher(publisher *PublisherConnection) {
 	log.Printf("Publisher %s not found for removal", publisher.id)
 }
 
+func (b *Broker) handShakeWithPublisher(ctx context.Context, conn net.Conn, cmd *command.HandshakeCommand) (ConnectHandlerStartFn, error) {
+	log.Printf("Registered new publisher from %s", conn.RemoteAddr())
+	publisher := b.addPublisher(conn)
+	command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
+	b.sendConfig(publisher)
+	return func() { publisher.Loop(ctx, b) }, nil
+}
+
+func (b *Broker) handShakeWithSubscriber(ctx context.Context, conn net.Conn, cmd *command.HandshakeCommand) (ConnectHandlerStartFn, error) {
+	log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
+	subscriber := b.addSubscriber(conn, cmd)
+	command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
+	b.sendConfig(subscriber)
+	return func() { subscriber.Loop(ctx, b) }, nil
+}
+
 func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) (ConnectHandlerStartFn, error) {
 	cmds, err := command.ReadCommands(conn, time.Second*5)
 	if err != nil {
@@ -119,17 +135,9 @@ func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) (Connec
 	case *command.HandshakeCommand:
 		switch cmd.ClientType() {
 		case command.Publisher:
-			log.Printf("Registered new publisher from %s", conn.RemoteAddr())
-			publisher := b.addPublisher(conn)
-			command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
-			b.sendConfig(publisher)
-			return func() { publisher.Loop(ctx, b) }, nil
+			return b.handShakeWithPublisher(ctx, conn, cmd)
 		case command.Subscriber:
-			log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
-			subscriber := b.addSubscriber(conn, cmd)
-			command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
-			b.sendConfig(subscriber)
-			return func() { subscriber.Loop(ctx, b) }, nil
+			return b.handShakeWithSubscriber(ctx, conn, cmd)
 		default:
 			log.Printf("Unknown client type: %s", cmd.Topic())
 			command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -165,13 +173,13 @@ func (b *Broker) acceptLoop(ctx context.Context, socket net.Listener) {
 			continue
 		}
 
-		fn, err := b.handShakeWithClient(ctx, conn)
+		loop, err := b.handShakeWithClient(ctx, conn)
 		if err != nil {
 			log.Printf("Failed to handle connection: %v", err)
 			continue
 		}
 
-		b.wg.Go(func() { fn() })
+		b.wg.Go(func() { loop() })
 	}
 }
 
