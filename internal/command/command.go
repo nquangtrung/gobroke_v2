@@ -13,13 +13,18 @@ import (
 type Action string
 
 const (
-	Handshake Action = "HANDSHAKE"
-	Ack       Action = "ACK"
-	Nack      Action = "NACK"
-	Publish   Action = "PUBLISH"
-	Message   Action = "MESSAGE"
+	Auth        Action = "AUTH"
+	Handshake   Action = "HANDSHAKE"
+	Unsubscribe Action = "UNSUBSCRIBE"
+
 	KeepAlive Action = "KEEPALIVE"
 	Config    Action = "CONFIG"
+
+	Ack  Action = "ACK"
+	Nack Action = "NACK"
+
+	Publish Action = "PUBLISH"
+	Message Action = "MESSAGE"
 )
 
 type Command interface {
@@ -31,6 +36,9 @@ type Command interface {
 	IsHandshake() bool
 	IsPublish() bool
 	IsKeepAlive() bool
+	IsAuth() bool
+	IsUnsubscribe() bool
+
 	IsSame(cmd Command) bool
 
 	Action() Action
@@ -52,6 +60,14 @@ func (c *BaseCommand) Params() []string {
 
 func (c *BaseCommand) String() string {
 	return fmt.Sprintf("%s %s", c.Action(), strings.Join(c.Params(), " "))
+}
+
+func (c *BaseCommand) IsAuth() bool {
+	return c.action == Auth
+}
+
+func (c *BaseCommand) IsUnsubscribe() bool {
+	return c.action == Unsubscribe
 }
 
 func (c *BaseCommand) IsAck() bool {
@@ -122,6 +138,10 @@ func NewCommandFromString(cmdStr string) (Command, error) {
 		return NewKeepAliveCommand(), nil
 	case Config:
 		return NewCommandConfig(parts[1]), nil
+	case Auth:
+		return NewAuthCommand(parts[1]), nil
+	case Unsubscribe:
+		return NewUnsubscribeCommand(), nil
 	default:
 		return NewCommand(Action(parts[0]), parts[1:]...), nil
 	}

@@ -85,22 +85,37 @@ func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd comman
 	go topic.Broadcast(publisher, cmd)
 }
 
-func (b *Broker) addSubscriber(conn net.Conn, cmd command.Command) *SubscriberConnection {
+func (b *Broker) addSubscriber(conn net.Conn, cmd *command.HandshakeCommand) *SubscriberConnection {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
 
-	topicName := cmd.Params()[1]
+	topicName := cmd.Topic()
 	topic, exists := b.topics[topicName]
 	if !exists {
 		topic = newTopic(topicName)
 		b.topics[topicName] = topic
 	}
 
-	subscriber := newSubscriberConnection(conn)
+	subscriber := newSubscriberConnection(conn, topicName)
 	topic.AddSubscriber(subscriber)
 	log.Printf("Subscriber %s (%s) added to topic %s", conn.RemoteAddr(), subscriber.id, topicName)
 
 	return subscriber
+}
+
+func (b *Broker) unsubscribe(subscriber *SubscriberConnection) {
+	b.topicsMutex.Lock()
+	defer b.topicsMutex.Unlock()
+
+	for _, topic := range b.topics {
+		if topic.name != subscriber.topic {
+			continue
+		}
+		topic.RemoveSubscriber(subscriber)
+		log.Printf("Subscriber %s unsubscribed from topic %s", subscriber.id, topic.name)
+		return
+	}
+	log.Printf("Subscriber %s was not subscribed to any topic", subscriber.id)
 }
 
 func (b *Broker) subscriberLoop(_ context.Context, subscriber *SubscriberConnection) {
@@ -133,6 +148,10 @@ func (b *Broker) subscriberLoop(_ context.Context, subscriber *SubscriberConnect
 				log.Printf("Received keep-alive command from subscriber %s", subscriber.id)
 			case *command.AckCommand, *command.NackCommand:
 				log.Printf("Received %s command from subscriber %s", cmd.Action(), subscriber.id)
+			case *command.UnsubscribeCommand:
+				log.Printf("Received unsubscribe command from subscriber %s", subscriber.id)
+				b.unsubscribe(subscriber)
+				command.WriteCommand(conn, command.NewAckCommand(cmd))
 			default:
 				log.Printf("Unexpected command from subscriber %s: %s", subscriber.id, cmd.Action())
 				command.WriteCommand(conn, command.NewNackCommand(cmd))
@@ -161,22 +180,26 @@ func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) error {
 	}
 
 	cmd := cmds[0]
-	switch {
-	case !cmd.IsHandshake():
-		log.Printf("Expected handshake command, got: %s", cmd.Action())
-		command.WriteCommand(conn, command.NewNackCommand(cmd))
-		return fmt.Errorf("expected handshake command, but got: %s", cmd.Action())
-	case cmd.Params()[0] == string(command.Publisher):
-		publisher := b.addPublisher(conn)
-		b.wg.Go(func() { b.publisherLoop(ctx, publisher) })
-		command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
-		b.sendConfig(publisher)
-	case cmd.Params()[0] == string(command.Subscriber):
-		log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
-		subscriber := b.addSubscriber(conn, cmd)
-		b.wg.Go(func() { b.subscriberLoop(ctx, subscriber) })
-		command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
-		b.sendConfig(subscriber)
+	switch cmd := cmd.(type) {
+	case *command.HandshakeCommand:
+		switch cmd.ClientType() {
+		case command.Publisher:
+			log.Printf("Registered new publisher from %s", conn.RemoteAddr())
+			publisher := b.addPublisher(conn)
+			b.wg.Go(func() { b.publisherLoop(ctx, publisher) })
+			command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
+			b.sendConfig(publisher)
+		case command.Subscriber:
+			log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
+			subscriber := b.addSubscriber(conn, cmd)
+			b.wg.Go(func() { b.subscriberLoop(ctx, subscriber) })
+			command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
+			b.sendConfig(subscriber)
+		default:
+			log.Printf("Unknown client type: %s", cmd.Topic())
+			command.WriteCommand(conn, command.NewNackCommand(cmd))
+			return fmt.Errorf("unknown client type: %s", cmd.Topic())
+		}
 	default:
 		log.Printf("Unknown client type: %s", cmd.Params()[0])
 		command.WriteCommand(conn, command.NewNackCommand(cmd))

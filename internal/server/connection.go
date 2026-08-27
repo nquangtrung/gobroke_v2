@@ -32,8 +32,9 @@ func newPublisherConnection(conn net.Conn) *PublisherConnection {
 }
 
 type SubscriberConnection struct {
-	conn net.Conn
-	id   string
+	conn  net.Conn
+	id    string
+	topic string
 }
 
 func (s *SubscriberConnection) ID() string {
@@ -44,9 +45,10 @@ func (s *SubscriberConnection) Conn() net.Conn {
 	return s.conn
 }
 
-func newSubscriberConnection(conn net.Conn) *SubscriberConnection {
+func newSubscriberConnection(conn net.Conn, topic string) *SubscriberConnection {
 	return &SubscriberConnection{
-		conn: conn,
-		id:   uuid.New().String(),
+		conn:  conn,
+		id:    uuid.New().String(),
+		topic: topic,
 	}
 }

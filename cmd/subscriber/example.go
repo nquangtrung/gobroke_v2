@@ -16,7 +16,9 @@ import (
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	defer func() {
+		cancel()
+	}()
 
 	arguments := utils.NamedArguments(os.Args[1:])
 	if _, ok := arguments["help"]; ok {
@@ -42,6 +44,7 @@ func main() {
 			log.Printf("Handling message on topic %s: %s", topic, message)
 		},
 	})
+
 	err := subscriber.Start(ctx)
 	if err != nil {
 		log.Fatalf("Failed to start subscriber: %v", err)

@@ -25,8 +25,20 @@ type Subscriber struct {
 	wg      sync.WaitGroup
 }
 
+func (s *Subscriber) Unsubscribe() error {
+	if s.conn == nil {
+		return errors.New("Connection not established")
+	}
+
+	cmd := command.NewUnsubscribeCommand()
+	err := command.WriteCommandAndWaitForAck(s.conn, cmd)
+
+	return err
+}
+
 func (s *Subscriber) Stop() error {
 	if s.conn != nil {
+		s.Unsubscribe()
 		err := s.conn.Close()
 		if err != nil {
 			return err
