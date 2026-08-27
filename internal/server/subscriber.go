@@ -29,7 +29,7 @@ func (s *SubscriberConnection) Conn() net.Conn {
 
 func (s *SubscriberConnection) Loop(ctx context.Context, b *Broker) {
 	conn := s.conn
-	log := log.New(log.Writer(), fmt.Sprintf("[Subscriber:%s] ", s.id), log.LstdFlags)
+	log := s.log
 	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
 	for {
 		log.Printf("Waiting for commands from subscriber %s", s.id)

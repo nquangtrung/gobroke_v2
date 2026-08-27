@@ -30,10 +30,6 @@ type Broker struct {
 
 type ConnectHandlerStartFn func()
 
-// func (b *Broker) publisherLoop(ctx context.Context, publisher *PublisherConnection) {
-// 	publisher.Loop(ctx, b)
-// }
-
 func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd command.PublishableCommand) {
 	b.topicsMutex.Lock()
 	defer b.topicsMutex.Unlock()
@@ -268,7 +264,8 @@ func New(params BrokerParams) *Broker {
 		KeepAlive:  utils.Ternary(params.KeepAlive == 0, time.Second*30, params.KeepAlive),
 	}
 	return &Broker{
-		params: resolvedParams,
-		topics: make(map[string]*Topic),
+		params:     resolvedParams,
+		topics:     make(map[string]*Topic),
+		publishers: make([]*PublisherConnection, 0),
 	}
 }

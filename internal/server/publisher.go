@@ -36,7 +36,7 @@ func newPublisherConnection(conn net.Conn) *PublisherConnection {
 
 func (p *PublisherConnection) Loop(ctx context.Context, b *Broker) {
 	conn := p.conn
-	log := log.New(log.Writer(), fmt.Sprintf("[Publisher:%s] ", p.id), log.LstdFlags)
+	log := p.log
 	log.Printf("Handling publisher connection from %s", p.id)
 	for {
 		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
