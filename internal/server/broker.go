@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -31,47 +30,9 @@ type Broker struct {
 
 type ConnectHandlerStartFn func()
 
-func (b *Broker) publisherLoop(_ context.Context, publisher *PublisherConnection) {
-	conn := publisher.conn
-	log := log.New(log.Writer(), fmt.Sprintf("[Publisher:%s] ", publisher.id), log.LstdFlags)
-	log.Printf("Handling publisher connection from %s", publisher.id)
-	for {
-		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
-		var netErr net.Error
-
-		switch {
-		case errors.Is(err, net.ErrClosed):
-			log.Printf("Connection closed broker %s", conn.RemoteAddr())
-			return
-		case errors.Is(err, io.EOF):
-			log.Printf("Connection closed by publisher %s", publisher.id)
-			return
-		case errors.As(err, &netErr) && netErr.Timeout():
-			log.Printf("Timeout reading from publisher %s: %v", publisher.id, err)
-			conn.Close()
-			return
-		case err != nil:
-			log.Printf("Failed to read command from publisher %s: %v", publisher.id, err)
-			continue
-		}
-
-		for _, cmd := range cmds {
-			switch {
-			case cmd.IsPublish():
-				log.Printf("Received publish command from %s with params: %v", publisher.id, cmd.Params())
-				go command.WriteCommand(conn, command.NewAckCommand(cmd))
-				go b.publishToSubscribers(publisher, cmd.(command.PublishableCommand))
-			case cmd.IsAck() || cmd.IsNack():
-				log.Printf("Received %s command from publisher %s", cmd.Action(), publisher.id)
-			case cmd.IsKeepAlive():
-				log.Printf("Received keep-alive command from publisher %s", publisher.id)
-			default:
-				log.Printf("Unexpected command from publisher %s: %s", publisher.id, cmd.Action())
-				command.WriteCommand(conn, command.NewNackCommand(cmd))
-			}
-		}
-	}
-}
+// func (b *Broker) publisherLoop(ctx context.Context, publisher *PublisherConnection) {
+// 	publisher.Loop(ctx, b)
+// }
 
 func (b *Broker) publishToSubscribers(publisher *PublisherConnection, cmd command.PublishableCommand) {
 	b.topicsMutex.Lock()
@@ -120,49 +81,6 @@ func (b *Broker) unsubscribe(subscriber *SubscriberConnection) {
 	log.Printf("Subscriber %s was not subscribed to any topic", subscriber.id)
 }
 
-func (b *Broker) subscriberLoop(_ context.Context, subscriber *SubscriberConnection) {
-	conn := subscriber.conn
-	log := log.New(log.Writer(), fmt.Sprintf("[Subscriber:%s] ", subscriber.id), log.LstdFlags)
-	log.Printf("Handling subscriber connection from %s", conn.RemoteAddr())
-	for {
-		log.Printf("Waiting for commands from subscriber %s", subscriber.id)
-		cmds, err := command.ReadCommands(conn, b.params.KeepAlive)
-		var netErr net.Error
-		switch {
-		case errors.Is(err, net.ErrClosed):
-			log.Printf("Connection closed broker %s", subscriber.id)
-			return
-		case errors.Is(err, io.EOF):
-			log.Printf("Connection closed by subscriber %s", subscriber.id)
-			return
-		case errors.As(err, &netErr) && netErr.Timeout():
-			log.Printf("Timeout reading from subscriber %s: %v", subscriber.id, err)
-			conn.Close()
-			return
-		case err != nil:
-			log.Printf("Failed to read command from subscriber %s: %v", subscriber.id, err)
-			continue
-		}
-
-		for _, cmd := range cmds {
-			switch cmd := cmd.(type) {
-			case *command.KeepAliveCommand:
-				log.Printf("Received keep-alive command from subscriber %s", subscriber.id)
-			case *command.AckCommand, *command.NackCommand:
-				log.Printf("Received %s command from subscriber %s", cmd.Action(), subscriber.id)
-			case *command.UnsubscribeCommand:
-				log.Printf("Received unsubscribe command from subscriber %s", subscriber.id)
-				b.unsubscribe(subscriber)
-				command.WriteCommand(conn, command.NewAckCommand(cmd))
-				return
-			default:
-				log.Printf("Unexpected command from subscriber %s: %s", subscriber.id, cmd.Action())
-				command.WriteCommand(conn, command.NewNackCommand(cmd))
-			}
-		}
-	}
-}
-
 func (b *Broker) addPublisher(conn net.Conn) *PublisherConnection {
 	b.publishersMutex.Lock()
 	defer b.publishersMutex.Unlock()
@@ -173,6 +91,20 @@ func (b *Broker) addPublisher(conn net.Conn) *PublisherConnection {
 	log.Printf("Added new publisher from %s, with ID: %s", conn.RemoteAddr(), id)
 
 	return publisher
+}
+
+func (b *Broker) removePublisher(publisher *PublisherConnection) {
+	b.publishersMutex.Lock()
+	defer b.publishersMutex.Unlock()
+
+	for i, p := range b.publishers {
+		if p == publisher {
+			b.publishers = append(b.publishers[:i], b.publishers[i+1:]...)
+			log.Printf("Removed publisher %s", publisher.id)
+			return
+		}
+	}
+	log.Printf("Publisher %s not found for removal", publisher.id)
 }
 
 func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) (ConnectHandlerStartFn, error) {
@@ -189,17 +121,15 @@ func (b *Broker) handShakeWithClient(ctx context.Context, conn net.Conn) (Connec
 		case command.Publisher:
 			log.Printf("Registered new publisher from %s", conn.RemoteAddr())
 			publisher := b.addPublisher(conn)
-			// b.wg.Go(func() { b.publisherLoop(ctx, publisher) })
 			command.WriteCommand(publisher.conn, command.NewAckCommand(cmd))
 			b.sendConfig(publisher)
-			return func() { b.publisherLoop(ctx, publisher) }, nil
+			return func() { publisher.Loop(ctx, b) }, nil
 		case command.Subscriber:
 			log.Printf("Registered new subscriber from %s", conn.RemoteAddr())
 			subscriber := b.addSubscriber(conn, cmd)
-			// b.wg.Go(func() { b.subscriberLoop(ctx, subscriber) })
 			command.WriteCommand(subscriber.conn, command.NewAckCommand(cmd))
 			b.sendConfig(subscriber)
-			return func() { b.subscriberLoop(ctx, subscriber) }, nil
+			return func() { subscriber.Loop(ctx, b) }, nil
 		default:
 			log.Printf("Unknown client type: %s", cmd.Topic())
 			command.WriteCommand(conn, command.NewNackCommand(cmd))
