@@ -1,7 +1,14 @@
 package command
 
+import (
+	"strings"
+
+	"trontria.com/gobroke/v2/internal/utils"
+)
+
 type IsOfer interface {
 	IsOf(cmd Command) bool
+	WrappedCommand() Command
 }
 
 type WrapCommand struct {
@@ -28,6 +35,14 @@ func (c *WrapCommand) IsOf(cmd Command) bool {
 	}
 
 	return true
+}
+
+func (c *WrapCommand) WrappedCommand() Command {
+	if len(c.params) == 0 {
+		return nil
+	}
+
+	return utils.Must(NewCommandFromString(strings.Join(c.params, " ")))
 }
 
 func NewWrapCommand(action Action, cmd Command) Command {

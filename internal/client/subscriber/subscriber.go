@@ -31,7 +31,7 @@ func (s *Subscriber) Unsubscribe() error {
 	}
 
 	cmd := command.NewUnsubscribeCommand()
-	err := command.WriteCommandAndWaitForAck(s.conn, cmd)
+	err := command.WriteCommand(s.conn, cmd)
 
 	return err
 }
@@ -111,6 +111,11 @@ func (s *Subscriber) handleLoop(ctx context.Context) {
 				}
 			case *command.AckCommand, *command.NackCommand:
 				log.Printf("Received %s command from server: %s", cmd.Action(), cmd.String())
+				wrappedCmd := cmd.(command.IsOfer).WrappedCommand()
+				if wrappedCmd.IsUnsubscribe() {
+					s.Stop()
+					return
+				}
 			case *command.ConfigCommand:
 				log.Printf("Received config command from server: %s", cmd.String())
 				config, _ := cmd.Config()
