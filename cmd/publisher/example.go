@@ -17,7 +17,7 @@ import (
 )
 
 func publishData(publisher *publisher.Publisher, topic string, message string) {
-	for i := range 5 {
+	for i := range 15 {
 		message := fmt.Sprintf("message:%s:%d", message, i)
 		err := publisher.Publish(topic, message)
 		if err != nil {
